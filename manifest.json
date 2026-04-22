@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "SureShopPH - Online Shopping Risk Detection",
+  "description": "Helps protect Filipino online shoppers from scams. Scans Shopee, Lazada, and Facebook Marketplace product listings for risk factors when you click Scan. Also checks URLs of other sites you visit for known phishing and fraud indicators. Data is analyzed by the SureShop service. A privacy policy is available at the SureShop website.",
+  "version": "0.2",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "scripting",
+    "storage",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "https://shopee.ph/*",
+    "https://www.lazada.com.ph/*",
+    "https://lazada.com.ph/*",
+    "https://www.facebook.com/marketplace/*",
+    "https://facebook.com/marketplace/*",
+    "http://localhost/*",
+    "https://*/*",
+    "http://*/*"
+  ],
+  "icons": {
+    "16": "sureshop logo ver1.png",
+    "32": "sureshop logo ver1.png",
+    "48": "sureshop logo ver1.png",
+    "128": "sureshop logo ver1.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://shopee.ph/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.lazada.com.ph/*", "https://lazada.com.ph/*"],
+      "js": ["content_lazada.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.facebook.com/marketplace/*", "https://facebook.com/marketplace/*"],
+      "js": ["content_facebook.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["universal_content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SureShop - Scan for scams"
+  }
+}
