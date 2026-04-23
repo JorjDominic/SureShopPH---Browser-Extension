@@ -10,6 +10,12 @@ const activationSection = document.getElementById("activationSection");
 const scanSection = document.getElementById("scanSection");
 const activateBtn = document.getElementById("activateBtn");
 const activationKeyInput = document.getElementById("activationKey");
+const activationMessage = document.getElementById("activationMessage");
+
+function showActivationMessage(text, isError = true) {
+  activationMessage.textContent = text;
+  activationMessage.className = isError ? "activation-msg activation-msg--error" : "activation-msg activation-msg--success";
+}
 
 // On popup open: decide which UI to show
 chrome.storage.local.get(["accessToken"], ({ accessToken }) => {
@@ -60,9 +66,10 @@ activateBtn.addEventListener("click", async () => {
   console.log("Activate clicked");
   const key = activationKeyInput.value.trim();
   if (!key) {
-    alert("Please enter an activation key");
+    showActivationMessage("Please enter an activation key.");
     return;
   }
+  activationMessage.className = "";
 
   activateBtn.textContent = "Activating...";
   activateBtn.disabled = true;
@@ -112,16 +119,14 @@ activateBtn.addEventListener("click", async () => {
       
       activationSection.style.display = "none";
       scanSection.style.display = "block";
-      
-      alert("Extension activated successfully!");
     } else {
       console.error("No access token in response:", responseData);
-      alert("Invalid activation key or server error");
+      showActivationMessage("Invalid activation key or server error.");
     }
 
   } catch (error) {
     console.error("Activation error:", error);
-    alert("Failed to activate extension. Please check your connection and try again.");
+    showActivationMessage("Failed to connect. Please check your connection and try again.");
   } finally {
     activateBtn.textContent = "Activate";
     activateBtn.disabled = false;

@@ -21,10 +21,10 @@
     "http://*/*"
   ],
   "icons": {
-    "16": "sureshop logo ver1.png",
-    "32": "sureshop logo ver1.png",
-    "48": "sureshop logo ver1.png",
-    "128": "sureshop logo ver1.png"
+    "16": "sureshop_logo_ver1.png",
+    "32": "sureshop_logo_ver1.png",
+    "48": "sureshop_logo_ver1.png",
+    "128": "sureshop_logo_ver1.png"
   },
   "content_scripts": [
     {

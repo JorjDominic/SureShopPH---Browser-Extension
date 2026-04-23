@@ -597,7 +597,7 @@
       return;
     }
 
-    // All other pages — URL scanning
+    // All other pages — trigger URL scan
     console.log("Universal: Sending URL_SCAN_PAGE message for:", location.href);
     showUrlScanCard();
     chrome.runtime.sendMessage({ type: "URL_SCAN_PAGE" });
@@ -618,24 +618,19 @@
     }
   }
 
-  // Monitor for URL changes (for SPAs) - ONLY if tab is active
-  // Compare path signatures so that hash/query changes are ignored.
-  let lastUrl = location.href;
+  // Monitor for domain changes during SPA navigation.
+  // Only re-scans when the hostname changes, not on every path change.
+  let lastHostname = location.hostname;
   setInterval(() => {
-    if (getPathSignature(location.href) !== getPathSignature(lastUrl) && isActiveTab) {
-      console.log("Universal: URL path changed from", lastUrl, "to", location.href);
-      lastUrl = location.href;
-      
-      // Clean up previous scan
+    if (location.hostname !== lastHostname && isActiveTab) {
+      console.log("Universal: Domain changed from", lastHostname, "to", location.hostname);
+      lastHostname = location.hostname;
       cleanupScanListeners();
       const existingCard = document.getElementById("sureshop-url-scan-card");
-      if (existingCard) {
-        existingCard.remove();
-      }
-      
+      if (existingCard) existingCard.remove();
       notifyBackgroundScript();
     }
-  }, 2000); // Less frequent checking for performance
+  }, 2000);
 
   // Clean up when page unloads
   window.addEventListener('beforeunload', () => {

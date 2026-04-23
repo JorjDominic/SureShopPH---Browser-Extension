@@ -14,14 +14,12 @@ let debugMode = true;
 const urlScanCache = new Map(); // key: hostname → { timestamp, result }
 const URL_SCAN_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-// Returns only origin+pathname, ignoring query strings and hash fragments.
-// This prevents hash changes (#section) and query-param changes (?tab=2)
-// from being treated as new pages that need rescanning.
+// Returns only the hostname so that path/query/hash changes within the same
+// domain do not trigger a new scan — one scan per domain per tab.
 function getUrlSignature(url) {
   if (!url) return url;
   try {
-    const u = new URL(url);
-    return u.origin + u.pathname.replace(/\/$/, '');
+    return new URL(url).hostname;
   } catch (e) {
     return url;
   }
@@ -191,20 +189,19 @@ async function handleUniversalUrlPageMessage(tab) {
   debugLog("🔄", "Current URL signature:", currentSig);
   debugLog("🔄", "Has URL (path) changed?", hasUrlChanged);
 
-  // Update tracked URL signature
+  // Update tracked domain signature
   trackedTabs.set(tab.id, currentSig);
-  debugLog("💾", "Updated tracked URL signature for universal tab:", tab.id);
+  debugLog("💾", "Updated tracked domain for universal tab:", tab.id);
 
-  // Trigger auto-scan only if URL has changed
+  // Trigger auto-scan only when the domain changes
   if (hasUrlChanged) {
     debugLog("🚀", "=== TRIGGERING UNIVERSAL URL AUTO-SCAN ===");
-    debugLog("🚀", "URL has changed, calling handleUrlAutoScan");
-    debugLog("🚀", "Parameters: tabId =", tab.id, "url =", tab.url);
+    debugLog("🚀", "Domain changed, calling handleUrlAutoScan");
     handleUrlAutoScan(tab.id, tab.url);
   } else {
-    debugLog("⏭️", "Same URL, skipping universal auto-scan");
+    debugLog("⏭️", "Same domain, skipping universal auto-scan");
   }
-  
+
   debugLog("🏁", "=== UNIVERSAL URL PAGE HANDLING COMPLETE ===");
 }
 
