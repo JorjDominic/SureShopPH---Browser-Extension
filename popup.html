@@ -4,11 +4,11 @@
         <meta charset="UTF-8">
     <title>SureShop</title>
     <link rel="stylesheet" href="popup.css">
-    <link rel="stylesheet" href="popup.css" />
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   </head>
   <body>
+    <div id="popup-root">
     <!-- Header Section -->
     <div class="header">
       <div class="logo">
@@ -30,9 +30,11 @@
     <!-- Scan Section -->
     <div id="scanSection" style="display:none;">
       <div class="scan-section">
-        <button id="scanBtn"><i class="fas fa-shield-alt"></i> Scan</button>
+        <button id="scanBtn"><i class="fas fa-shield-alt"></i> Normal Scan</button>
         <button id="commentsBtn"><i class="fas fa-layer-group"></i> Deep Scan</button>
+        <button id="unbindBtn"><i class="fas fa-unlink"></i> Unbind Activation Key</button>
       </div>
+      <div id="unbindMessage"></div>
       
       <div class="output-container">
         <pre id="output"></pre>
@@ -41,7 +43,7 @@
       <div class="privacy-notice">
         <small>
           <i class="fas fa-info-circle"></i>
-          When you click <strong>Manual Scan</strong>, product details visible on the current page are sent to the SureShop service for risk analysis. URLs of non-shopping sites are scanned automatically. No data is sold or shared with third parties.
+          When you click <strong>Normal Scan</strong>, product details visible on the current page are sent to the SureShop service for risk analysis. URLs of non-shopping sites are scanned automatically. No data is sold or shared with third parties.
         </small>
       </div>
 
@@ -49,6 +51,7 @@
         <small>© 2026 SureShop - Stay Safe Online</small>
       </div>
     </div>
+    </div><!-- /#popup-root -->
 
     <script src="popup.js"></script>
   </body>

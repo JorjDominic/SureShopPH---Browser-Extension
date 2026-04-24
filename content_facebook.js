@@ -29,45 +29,42 @@
       <div class="header">
         <div class="title-section">
           <i class="fas fa-shield-alt"></i>
-          <strong>SureShop</strong>
+          <div class="title-text">
+            <strong>SureShop</strong>
+            <span class="card-subtitle">Risk Scanner</span>
+          </div>
         </div>
         <button class="close">×</button>
       </div>
       <div class="body">
-        <p>Scan Is Ready</p>
+        <div class="ready-state">
+          <div class="ready-status-badge">
+            <i class="fas fa-check-circle"></i> Ready to Scan
+          </div>
+          <div class="ready-badge">
+            <i class="fas fa-shield-alt"></i>
+          </div>
+          <div class="ready-title">Product Detected</div>
+          <div class="ready-desc">Open the SureShop extension to analyze this listing</div>
+        </div>
       </div>
     `;
 
     const style = document.createElement("style");
     style.textContent = `
-      :root {
-        --dash-primary: #22c55e;
-        --dash-primary-dark: #15803d;
-        --dash-primary-light: #dcfce7;
-        --dash-dark: #1f2937;
-        --dash-light: #f9fafb;
-        --dash-gray: #6b7280;
-        --dash-gray-light: #f3f4f6;
-        --dash-border: #e5e7eb;
-        --dash-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        --dash-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        --dash-radius: 12px;
-      }
-
       #sureshopph-fb-scan-card {
         position: fixed;
         top: 20px;
         right: 20px;
-        width: 240px;
-        background: white;
-        border: 2px solid transparent;
-        border-radius: var(--dash-radius);
+        width: 260px;
+        background: #f6f6f9;
+        border-radius: 2rem;
         padding: 0;
         font-family: 'Poppins', system-ui, sans-serif;
-        box-shadow: var(--dash-shadow-lg);
+        box-shadow: 0 2rem 3rem rgba(27, 156, 133, 0.18);
         z-index: 999999;
         animation: slideInFbCard 0.3s ease;
-        border-left: 4px solid #1877f2;
+        border-left: 4px solid #1b9c85;
         overflow: hidden;
       }
 
@@ -80,39 +77,117 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 12px 16px;
-        background: linear-gradient(135deg, #1877f2 0%, #0d5db5 100%);
-        color: white;
-        border-radius: var(--dash-radius) var(--dash-radius) 0 0;
+        padding: 14px 16px;
+        background: linear-gradient(135deg, #1b9c85 0%, #138a73 100%);
+        color: #fff;
+        border-radius: 2rem 2rem 0 0;
         margin: 0;
+        position: relative;
+        overflow: hidden;
+      }
+
+      #sureshopph-fb-scan-card .header::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(45deg, rgba(255,255,255,0.12) 0%, transparent 60%);
+        pointer-events: none;
       }
 
       #sureshopph-fb-scan-card .title-section {
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 14px;
-        font-weight: 700;
-        color: white;
+        gap: 10px;
+        position: relative;
+        z-index: 1;
       }
 
       #sureshopph-fb-scan-card .title-section i {
-        color: white;
-        font-size: 16px;
-        opacity: 0.9;
+        color: #fff;
+        font-size: 18px;
+        opacity: 0.95;
+      }
+
+      #sureshopph-fb-scan-card .title-text {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+
+      #sureshopph-fb-scan-card .title-text strong {
+        font-size: 15px;
+        font-weight: 700;
+        color: #fff;
+        line-height: 1.1;
+      }
+
+      #sureshopph-fb-scan-card .card-subtitle {
+        font-size: 10px;
+        color: rgba(255,255,255,0.85);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 400;
+        line-height: 1;
       }
 
       #sureshopph-fb-scan-card .body {
         padding: 16px;
-        background: white;
+        background: #f6f6f9;
+        text-align: center;
       }
 
-      #sureshopph-fb-scan-card .body p {
+      #sureshopph-fb-scan-card .ready-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+
+      #sureshopph-fb-scan-card .ready-status-badge {
+        background: rgba(27, 156, 133, 0.12);
+        border: 1px solid rgba(27, 156, 133, 0.25);
+        border-radius: 0.4rem;
+        padding: 5px 10px;
+        font-size: 10px;
+        font-weight: 600;
+        color: #138a73;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      #sureshopph-fb-scan-card .ready-badge {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background: rgba(27, 156, 133, 0.12);
+        border: 3px solid #1b9c85;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #1b9c85;
+        font-size: 20px;
+        margin: 4px auto;
+        animation: readyPulse 2.5s ease-in-out infinite;
+      }
+
+      @keyframes readyPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(27, 156, 133, 0.35); }
+        50%       { box-shadow: 0 0 0 8px rgba(27, 156, 133, 0); }
+      }
+
+      #sureshopph-fb-scan-card .ready-title {
         font-size: 13px;
-        color: var(--dash-gray);
-        margin: 0;
-        line-height: 1.4;
-        font-weight: 500;
+        font-weight: 700;
+        color: #363949;
+      }
+
+      #sureshopph-fb-scan-card .ready-desc {
+        font-size: 11px;
+        color: #677483;
+        line-height: 1.5;
       }
 
       #sureshopph-fb-scan-card .close {
@@ -122,7 +197,7 @@
         cursor: pointer;
         line-height: 1;
         padding: 6px;
-        color: white;
+        color: #fff;
         border-radius: 6px;
         transition: all 0.2s ease;
         width: 28px;
@@ -131,6 +206,8 @@
         align-items: center;
         justify-content: center;
         font-weight: bold;
+        position: relative;
+        z-index: 1;
       }
 
       #sureshopph-fb-scan-card .close:hover {
@@ -140,7 +217,7 @@
 
       #sureshopph-fb-scan-card:hover {
         transform: translateY(-2px);
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 2.5rem 4rem rgba(27, 156, 133, 0.25);
       }
 
       #sureshopph-fb-scan-card.dismissing {
@@ -150,6 +227,13 @@
       }
     `;
 
+    if (!document.getElementById('sureshop-fa-css')) {
+      const faLink = document.createElement('link');
+      faLink.id = 'sureshop-fa-css';
+      faLink.rel = 'stylesheet';
+      faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css';
+      document.head.appendChild(faLink);
+    }
     document.head.appendChild(style);
     document.body.appendChild(card);
 
@@ -391,6 +475,160 @@
       : { value: null, confidence: "low" };
   }
 
+  function extractDescription() {
+    const priceRe = /^(PHP|₱)\s*[\d,]+/i;
+    const conditionRe = /^(new|used\s*-|for\s*parts)/i;
+
+    // Strategy 1: og:description — format varies: price·condition·location·desc OR price·desc
+    const ogDesc = document.querySelector('meta[property="og:description"]');
+    if (ogDesc) {
+      const content = ogDesc.getAttribute("content") || "";
+      const parts = content.split("·").map(p => p.trim()).filter(Boolean);
+
+      if (parts.length >= 2) {
+        // Remove parts that look like price or known condition labels
+        const descParts = parts.filter(p => !priceRe.test(p) && !conditionRe.test(p));
+        if (descParts.length > 0) {
+          const desc = cleanText(descParts.join(" "));
+          if (desc && desc.length > 5) {
+            return { value: desc.slice(0, 3000), confidence: "medium" };
+          }
+        }
+      } else if (parts.length === 1 && !priceRe.test(parts[0]) && parts[0].length > 5) {
+        return { value: parts[0].slice(0, 3000), confidence: "low" };
+      }
+    }
+
+    // Strategy 2: look for a "Description" heading in visible page text
+    const bodyText = document.body.innerText;
+    const idx = bodyText.search(/\bDescription\b/i);
+    if (idx !== -1) {
+      const section = bodyText.slice(idx + "Description".length, idx + 1200).trim();
+      const stopIdx = section.search(
+        /\n(Seller|Condition|Location|Listed|Similar|You May|Message|Marketplace|Comments?)/i
+      );
+      const desc = (stopIdx !== -1 ? section.slice(0, stopIdx) : section).trim();
+      if (desc.length > 5) {
+        return { value: desc.slice(0, 3000), confidence: "medium" };
+      }
+    }
+
+    // Strategy 3: DOM containers with description-related attributes
+    const descSelectors = [
+      '[data-testid*="description"]',
+      '[aria-label*="description" i]',
+      '[class*="description"]'
+    ];
+    for (const sel of descSelectors) {
+      const el = document.querySelector(sel);
+      if (el) {
+        const text = cleanText(el.textContent);
+        if (text && text.length > 10 && !priceRe.test(text) && !conditionRe.test(text)) {
+          return { value: text.slice(0, 3000), confidence: "medium" };
+        }
+      }
+    }
+
+    return { value: null, confidence: "low" };
+  }
+
+  // ===============================
+  // Comments Extractor (Facebook Marketplace)
+  // ===============================
+  function extractFacebookComments(maxComments = 10) {
+    const comments = [];
+
+    // Strategy 1: DOM — find comment articles inside a comments section
+    const commentWrappers = [...document.querySelectorAll(
+      '[aria-label*="comment" i], [aria-label*="Comment" i]'
+    )].filter(el => el.tagName !== 'BUTTON' && el.querySelectorAll('[role="article"]').length > 0);
+
+    if (commentWrappers.length > 0) {
+      const articles = [...commentWrappers[0].querySelectorAll('[role="article"]')].slice(0, maxComments * 2);
+      for (const article of articles) {
+        // Skip seller/seller-response articles
+        const ariaLabel = (article.getAttribute('aria-label') || "").toLowerCase();
+        if (/seller|response from seller/i.test(ariaLabel)) continue;
+
+        // Username: first link or strong inside the comment
+        const nameEl = article.querySelector(
+          'a[href*="/user/"] strong, a[href*="profile.php"] strong, a[href*="/user/"], strong'
+        );
+        const username = nameEl ? cleanText(nameEl.textContent) : null;
+
+        // Skip if the comment text starts with seller-response indicators
+        const allLeafTexts = [...article.querySelectorAll('*')]
+          .filter(el => el.childElementCount === 0)
+          .map(el => cleanText(el.textContent))
+          .filter(Boolean);
+
+        const isSellerReply = allLeafTexts.some(t =>
+          /^(Seller['']?s?\s*(Reply|Response)|Response\s+from\s+Seller)/i.test(t)
+        );
+        if (isSellerReply) continue;
+
+        // Comment text: longest meaningful leaf
+        const text = allLeafTexts
+          .filter(t =>
+            t && t !== username && t.length > 3 &&
+            !/^(\d+|just now|\d+\s*(min|hr|h|hour|day|week|month|year)s?\s*(ago)?|Like|Reply|See more)$/i.test(t)
+          )
+          .sort((a, b) => b.length - a.length)[0] || null;
+
+        if (text && comments.length < maxComments) {
+          comments.push({ username: username || "Anonymous", rating_stars: null, text, date: null, variant: null });
+        }
+      }
+      if (comments.length > 0) return { value: comments, confidence: "high" };
+    }
+
+    // Strategy 2: innerText parsing — find "Comments" section and parse lines
+    const bodyText = document.body.innerText;
+    const idx = bodyText.search(/\bComments?\b/);
+    if (idx !== -1) {
+      const section = bodyText.slice(idx, idx + 6000);
+      const lines = section.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+      let i = 1; // skip "Comments" header line
+      let inSellerResponse = false;
+      while (i < lines.length && comments.length < maxComments) {
+        const line = lines[i];
+
+        // Detect and skip seller response blocks
+        if (/^(Seller['']?s?\s*(Reply|Response)|Response\s+from\s+Seller)/i.test(line)) {
+          inSellerResponse = true; i++; continue;
+        }
+        // End of seller response block when we hit a new short username-like line
+        if (inSellerResponse && line.length <= 60 &&
+            !/^(just now|\d+\s*(min|hr|h|hour|day|week|month|year)s?|Like|Reply)/i.test(line)) {
+          inSellerResponse = false;
+        }
+        if (inSellerResponse) { i++; continue; }
+
+        // Skip known meta/UI lines
+        if (/^(\d+\s+Comment|See\s+all|Most\s+Relevant|Load\s+more|Like|Reply|Write\s+a|Add\s+a)/i.test(line)) { i++; continue; }
+        if (/^\d+$/.test(line) || line.length < 3) { i++; continue; }
+        if (/^(just now|\d+\s*(min|hr|h|hour|day|week|month|year)s?\s*(ago)?|[A-Z][a-z]+ \d+)$/i.test(line)) { i++; continue; }
+
+        // Short line (<= 60 chars) followed by a longer comment line
+        if (line.length <= 60 && i + 1 < lines.length) {
+          const nextLine = lines[i + 1];
+          if (
+            nextLine && nextLine.length > 5 &&
+            !/^(\d+\s+Comment|Like|Reply|Write|Add|just now|\d+\s*(min|hr|h|hour|day|week|month)s?)/i.test(nextLine)
+          ) {
+            comments.push({ username: line, rating_stars: null, text: nextLine, date: null, variant: null });
+            i += 2;
+            continue;
+          }
+        }
+        i++;
+      }
+    }
+
+    return { value: comments, confidence: comments.length > 0 ? "medium" : "low" };
+  }
+
   // ===============================
   // Main Extraction
   // ===============================
@@ -404,6 +642,7 @@
     const condition = extractCondition();
     const locationInfo = extractLocation();
     const listingDate = extractListingDate();
+    const description = extractDescription();
 
     return {
       success: true,
@@ -415,6 +654,7 @@
       condition: condition.value,
       location: locationInfo.value,
       listing_date: listingDate.value,
+      description: description.value,
       listing_url: window.location.href,
       extracted_at: new Date().toISOString()
     };
@@ -470,6 +710,14 @@
       const data = extractFacebookData();
       console.log("Facebook extracted data:", data);
       sendResponse(data);
+      return true;
+    }
+
+    if (message.type === "EXTRACT_REVIEWS") {
+      console.log("Facebook: handling EXTRACT_REVIEWS");
+      const comments = extractFacebookComments(10);
+      console.log("Facebook extracted comments:", comments);
+      sendResponse({ reviews: comments.value });
       return true;
     }
 

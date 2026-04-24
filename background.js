@@ -167,7 +167,7 @@ async function handleUniversalUrlPageMessage(tab) {
     tabId: tab.id 
   });
   chrome.action.setBadgeBackgroundColor({ 
-    color: "#3b82f6"
+    color: "#1b9c85"
   });
   chrome.action.setTitle({
     title: "URL scanning active - URLs are scanned automatically",
@@ -233,7 +233,7 @@ async function handleProductPageMessage(tab) {
     tabId: tab.id 
   });
   chrome.action.setBadgeBackgroundColor({ 
-    color: "#22c55e"
+    color: "#1b9c85"
   });
   chrome.action.setTitle({
     title: "Click to manually scan this Shopee product for safety",
@@ -260,7 +260,7 @@ async function handleLazadaProductPageMessage(tab) {
   if (!isInitialized) await initializeExtension();
 
   chrome.action.setBadgeText({ text: "SCAN", tabId: tab.id });
-  chrome.action.setBadgeBackgroundColor({ color: "#f97316" });
+  chrome.action.setBadgeBackgroundColor({ color: "#1b9c85" });
   chrome.action.setTitle({
     title: "Click to manually scan this Lazada product for safety",
     tabId: tab.id
@@ -282,7 +282,7 @@ async function handleFacebookMarketplacePageMessage(tab) {
   if (!isInitialized) await initializeExtension();
 
   chrome.action.setBadgeText({ text: "SCAN", tabId: tab.id });
-  chrome.action.setBadgeBackgroundColor({ color: "#1877f2" });
+  chrome.action.setBadgeBackgroundColor({ color: "#1b9c85" });
   chrome.action.setTitle({
     title: "Click to manually scan this Facebook Marketplace listing for safety",
     tabId: tab.id
@@ -526,16 +526,16 @@ function updateBadgeForUrlRisk(tabId, riskLevel) {
   
   switch(riskLevel) {
     case "High":
-      badgeColor = "#dc2626"; // Red
+      badgeColor = "#ff0060"; // Danger red
       break;
     case "Medium":
-      badgeColor = "#f59e0b"; // Orange
+      badgeColor = "#f7d060"; // Warning yellow
       break;
     case "Low":
-      badgeColor = "#16a34a"; // Green
+      badgeColor = "#1b9c85"; // Teal success
       break;
     default:
-      badgeColor = "#3b82f6"; // Blue
+      badgeColor = "#1b9c85"; // Teal
   }
   
   chrome.action.setBadgeText({ text: badgeText, tabId });

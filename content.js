@@ -17,97 +17,165 @@ function showScanCard() {
     <div class="header">
       <div class="title-section">
         <i class="fas fa-shield-alt"></i>
-        <strong>SureShop</strong>
+        <div class="title-text">
+          <strong>SureShop</strong>
+          <span class="card-subtitle">Risk Scanner</span>
+        </div>
       </div>
       <button class="close">×</button>
     </div>
     <div class="body">
-      <p>Scan Is Ready</p>
+      <div class="ready-state">
+        <div class="ready-status-badge">
+          <i class="fas fa-check-circle"></i> Ready to Scan
+        </div>
+        <div class="ready-badge">
+          <i class="fas fa-shield-alt"></i>
+        </div>
+        <div class="ready-title">Product Detected</div>
+        <div class="ready-desc">Open the SureShop extension to analyze this listing</div>
+      </div>
     </div>
   `;
 
   const style = document.createElement("style");
   style.textContent = `
-    /* CSS Variables matching dashboard */
-    :root {
-      --dash-primary: #22c55e;
-      --dash-primary-dark: #15803d;
-      --dash-primary-light: #dcfce7;
-      --dash-dark: #1f2937;
-      --dash-light: #f9fafb;
-      --dash-gray: #6b7280;
-      --dash-gray-light: #f3f4f6;
-      --dash-border: #e5e7eb;
-      --dash-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-      --dash-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-      --dash-radius: 12px;
-    }
-
     #sureshopph-scan-card {
       position: fixed;
       top: 20px;
       right: 20px;
-      width: 240px;
-      background: white;
-      border: 2px solid transparent;
-      border-radius: var(--dash-radius);
+      width: 260px;
+      background: #f6f6f9;
+      border-radius: 2rem;
       padding: 0;
       font-family: 'Poppins', system-ui, sans-serif;
-      box-shadow: var(--dash-shadow-lg);
+      box-shadow: 0 2rem 3rem rgba(27, 156, 133, 0.18);
       z-index: 999999;
       animation: slideInCard 0.3s ease;
-      border-left: 4px solid var(--dash-primary);
+      border-left: 4px solid #1b9c85;
       overflow: hidden;
     }
 
     @keyframes slideInCard {
-      from { 
-        opacity: 0; 
-        transform: translateY(-12px) scale(0.95); 
-      }
-      to { 
-        opacity: 1; 
-        transform: translateY(0) scale(1); 
-      }
+      from { opacity: 0; transform: translateY(-12px) scale(0.95); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
     }
 
     #sureshopph-scan-card .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 12px 16px;
-      background: linear-gradient(135deg, var(--dash-primary) 0%, var(--dash-primary-dark) 100%);
-      color: white;
-      border-radius: var(--dash-radius) var(--dash-radius) 0 0;
+      padding: 14px 16px;
+      background: linear-gradient(135deg, #1b9c85 0%, #138a73 100%);
+      color: #fff;
+      border-radius: 2rem 2rem 0 0;
       margin: 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #sureshopph-scan-card .header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(45deg, rgba(255,255,255,0.12) 0%, transparent 60%);
+      pointer-events: none;
     }
 
     #sureshopph-scan-card .title-section {
       display: flex;
       align-items: center;
-      gap: 8px;
-      font-size: 14px;
-      font-weight: 700;
-      color: white;
+      gap: 10px;
+      position: relative;
+      z-index: 1;
     }
 
     #sureshopph-scan-card .title-section i {
-      color: white;
-      font-size: 16px;
-      opacity: 0.9;
+      color: #fff;
+      font-size: 18px;
+      opacity: 0.95;
+    }
+
+    #sureshopph-scan-card .title-text {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    #sureshopph-scan-card .title-text strong {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.1;
+    }
+
+    #sureshopph-scan-card .card-subtitle {
+      font-size: 10px;
+      color: rgba(255,255,255,0.85);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 400;
+      line-height: 1;
     }
 
     #sureshopph-scan-card .body {
       padding: 16px;
-      background: white;
+      background: #f6f6f9;
+      text-align: center;
     }
 
-    #sureshopph-scan-card .body p {
+    #sureshopph-scan-card .ready-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #sureshopph-scan-card .ready-status-badge {
+      background: rgba(27, 156, 133, 0.12);
+      border: 1px solid rgba(27, 156, 133, 0.25);
+      border-radius: 0.4rem;
+      padding: 5px 10px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #138a73;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    #sureshopph-scan-card .ready-badge {
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: rgba(27, 156, 133, 0.12);
+      border: 3px solid #1b9c85;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #1b9c85;
+      font-size: 20px;
+      margin: 4px auto;
+      animation: readyPulse 2.5s ease-in-out infinite;
+    }
+
+    @keyframes readyPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(27, 156, 133, 0.35); }
+      50%       { box-shadow: 0 0 0 8px rgba(27, 156, 133, 0); }
+    }
+
+    #sureshopph-scan-card .ready-title {
       font-size: 13px;
-      color: var(--dash-gray);
-      margin: 0;
-      line-height: 1.4;
-      font-weight: 500;
+      font-weight: 700;
+      color: #363949;
+    }
+
+    #sureshopph-scan-card .ready-desc {
+      font-size: 11px;
+      color: #677483;
+      line-height: 1.5;
     }
 
     #sureshopph-scan-card .close {
@@ -117,7 +185,7 @@ function showScanCard() {
       cursor: pointer;
       line-height: 1;
       padding: 6px;
-      color: white;
+      color: #fff;
       border-radius: 6px;
       transition: all 0.2s ease;
       width: 28px;
@@ -126,6 +194,8 @@ function showScanCard() {
       align-items: center;
       justify-content: center;
       font-weight: bold;
+      position: relative;
+      z-index: 1;
     }
 
     #sureshopph-scan-card .close:hover {
@@ -133,14 +203,11 @@ function showScanCard() {
       transform: scale(1.1);
     }
 
-    /* Enhanced hover effect */
     #sureshopph-scan-card:hover {
       transform: translateY(-2px);
-      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-      border-color: var(--dash-primary-light);
+      box-shadow: 0 2.5rem 4rem rgba(27, 156, 133, 0.25);
     }
 
-    /* Smooth dismiss animation */
     #sureshopph-scan-card.dismissing {
       opacity: 0;
       transform: translateY(-12px) scale(0.95);
@@ -148,6 +215,13 @@ function showScanCard() {
     }
   `;
 
+  if (!document.getElementById('sureshop-fa-css')) {
+    const faLink = document.createElement('link');
+    faLink.id = 'sureshop-fa-css';
+    faLink.rel = 'stylesheet';
+    faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css';
+    document.head.appendChild(faLink);
+  }
   document.head.appendChild(style);
   document.body.appendChild(card);
 
@@ -588,6 +662,47 @@ function showScanCard() {
   }
 
   // ===============================
+  // Product Description
+  // ===============================
+  function extractProductDescription() {
+    // Strategy 1: dedicated description containers
+    const descSelectors = [
+      '[class*="product-detail"] [class*="description"]',
+      '[class*="item-description"]',
+      '[class*="shopee-product-description"]',
+      '[class*="product-description"]'
+    ];
+
+    for (const selector of descSelectors) {
+      const el = document.querySelector(selector);
+      if (el) {
+        const text = cleanText(el.textContent);
+        if (text && text.length > 10) {
+          return { value: text.slice(0, 3000), confidence: "high" };
+        }
+      }
+    }
+
+    // Strategy 2: locate the "Product Description" section in page text
+    const bodyText = document.body.innerText;
+    const idx = bodyText.search(/Product\s+Description/i);
+    if (idx !== -1) {
+      const section = bodyText
+        .slice(idx + "Product Description".length, idx + 1500)
+        .trim();
+      const stopIdx = section.search(
+        /\n(Product Rating|Reviews?|Shop|Seller|Add to Cart)/i
+      );
+      const desc = (stopIdx !== -1 ? section.slice(0, stopIdx) : section).trim();
+      if (desc.length > 10) {
+        return { value: desc.slice(0, 3000), confidence: "medium" };
+      }
+    }
+
+    return { value: null, confidence: "low" };
+  }
+
+  // ===============================
   // Main Extraction (FIXED - No Comments)
   // ===============================
   function extractShopeeData() {
@@ -602,6 +717,7 @@ function showScanCard() {
     const profileUrl = extractProfileUrl();
     const imageCount = extractProductImageCount();
     const reviews = extractReviews(10);
+    const description = extractProductDescription();
 
     return {
       success: true,
@@ -615,6 +731,7 @@ function showScanCard() {
       seller_name: sellerName.value,
       profile_url: profileUrl.value,
       image_count: imageCount.value,
+      description: description.value,
       reviews: reviews.value,
       extracted_at: new Date().toISOString()
     };

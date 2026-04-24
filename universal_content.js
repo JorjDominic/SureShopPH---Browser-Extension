@@ -61,84 +61,93 @@
     card.innerHTML = `
       <div class="header">
         <div class="title-section">
-          <i class="fas fa-globe"></i>
-          <strong>SureShop</strong>
+          <i class="fas fa-shield-alt"></i>
+          <div class="title-text">
+            <strong>SureShop</strong>
+            <span class="card-subtitle">Risk Scanner</span>
+          </div>
         </div>
         <button class="close">×</button>
       </div>
       <div class="body">
         <div class="scan-status">
-          <div class="loading-spinner"></div>
-          <p>Scanning URL...</p>
+          <div class="scanning-badge">
+            <div class="loading-spinner"></div>
+            <span>Scanning URL...</span>
+          </div>
         </div>
         <div class="scan-results" style="display: none;">
-          <div class="risk-indicator">
-            <div class="risk-badge"></div>
-            <div class="risk-text"></div>
+          <div class="url-status-badge">
+            <i class="fas fa-globe"></i> URL Scanned
           </div>
+          <div class="risk-badge"></div>
+          <div class="risk-level-text"></div>
+          <div class="risk-score-text"></div>
           <div class="domain-info"></div>
+          <div class="scan-time"></div>
         </div>
       </div>
     `;
 
     const style = document.createElement("style");
     style.textContent = `
-      /* CSS Variables matching dashboard */
-      :root {
-        --dash-primary: #22c55e;
-        --dash-primary-dark: #15803d;
-        --dash-primary-light: #dcfce7;
-        --dash-dark: #1f2937;
-        --dash-light: #f9fafb;
-        --dash-gray: #6b7280;
-        --dash-gray-light: #f3f4f6;
-        --dash-border: #e5e7eb;
-        --dash-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        --dash-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        --dash-radius: 12px;
-        --dash-secondary: #3b82f6;
-        --dash-danger: #dc2626;
-        --dash-warning: #f59e0b;
-        --dash-success: #16a34a;
-      }
+      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
 
+      /* Design tokens — matches popup.css */
       #sureshop-url-scan-card {
+        --color-primary: #1b9c85;
+        --color-primary-dark: #138a73;
+        --color-danger: #ff0060;
+        --color-success: #1b9c85;
+        --color-warning: #f7d060;
+        --color-white: #fff;
+        --color-info-dark: #7d8da1;
+        --color-dark: #363949;
+        --color-light: rgba(27, 156, 133, 0.18);
+        --color-dark-variant: #677483;
+        --color-background: #f6f6f9;
+        --card-border-radius: 2rem;
+        --box-shadow: 0 2rem 3rem rgba(27, 156, 133, 0.18);
+
         position: fixed;
         top: 20px;
         right: 20px;
-        width: 280px;
-        background: white;
-        border: 2px solid transparent;
-        border-radius: var(--dash-radius);
+        width: 260px;
+        background: var(--color-white);
+        border-radius: var(--card-border-radius);
         padding: 0;
         font-family: 'Poppins', system-ui, sans-serif;
-        box-shadow: var(--dash-shadow-lg);
+        box-shadow: var(--box-shadow);
         z-index: 999999;
         animation: slideInUrlCard 0.3s ease;
-        border-left: 4px solid var(--dash-secondary);
+        border-left: 4px solid var(--color-primary);
         overflow: hidden;
       }
 
       @keyframes slideInUrlCard {
-        from { 
-          opacity: 0; 
-          transform: translateY(-12px) scale(0.95); 
-        }
-        to { 
-          opacity: 1; 
-          transform: translateY(0) scale(1); 
-        }
+        from { opacity: 0; transform: translateY(-12px) scale(0.95); }
+        to   { opacity: 1; transform: translateY(0) scale(1); }
       }
 
       #sureshop-url-scan-card .header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 12px 16px;
-        background: linear-gradient(135deg, var(--dash-secondary) 0%, #1d4ed8 100%);
-        color: white;
-        border-radius: var(--dash-radius) var(--dash-radius) 0 0;
+        padding: 14px 16px;
+        background: linear-gradient(135deg, #1b9c85 0%, #138a73 100%);
+        color: var(--color-white);
+        border-radius: var(--card-border-radius) var(--card-border-radius) 0 0;
         margin: 0;
+        position: relative;
+        overflow: hidden;
+      }
+
+      #sureshop-url-scan-card .header::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(45deg, rgba(255,255,255,0.12) 0%, transparent 60%);
+        pointer-events: none;
       }
 
       #sureshop-url-scan-card .title-section {
@@ -147,131 +156,147 @@
         gap: 8px;
         font-size: 14px;
         font-weight: 700;
-        color: white;
+        color: var(--color-white);
       }
 
       #sureshop-url-scan-card .title-section i {
-        color: white;
+        color: var(--color-white);
         font-size: 16px;
         opacity: 0.9;
         animation: urlGlobe 2s ease-in-out infinite;
       }
 
       @keyframes urlGlobe {
-        0%, 100% { 
-          transform: scale(1);
-          opacity: 0.9;
-        }
-        50% { 
-          transform: scale(1.1);
-          opacity: 1;
-        }
+        0%, 100% { transform: scale(1); opacity: 0.9; }
+        50%       { transform: scale(1.1); opacity: 1; }
       }
 
       #sureshop-url-scan-card .body {
         padding: 16px;
-        background: white;
+        background: var(--color-background);
       }
 
       .scan-status {
         display: flex;
         align-items: center;
-        gap: 10px;
         justify-content: center;
-        text-align: center;
+        padding: 4px 0;
+      }
+
+      .scanning-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(27, 156, 133, 0.08);
+        border: 1px solid rgba(27, 156, 133, 0.2);
+        border-radius: 0.4rem;
+        padding: 8px 14px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #138a73;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
       }
 
       .loading-spinner {
-        width: 18px;
-        height: 18px;
-        border: 2px solid var(--dash-border);
-        border-top: 2px solid var(--dash-secondary);
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(27, 156, 133, 0.2);
+        border-top: 2px solid #1b9c85;
         border-radius: 50%;
         animation: spin 1s linear infinite;
         flex-shrink: 0;
       }
 
       @keyframes spin {
-        0% { transform: rotate(0deg); }
+        0%   { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
       }
 
-      .scan-status p {
-        font-size: 13px;
-        color: var(--dash-gray);
-        margin: 0;
-        line-height: 1.4;
-        font-weight: 500;
-      }
-
       .scan-results {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
         text-align: center;
         animation: fadeInResults 0.4s ease;
       }
 
       @keyframes fadeInResults {
         from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
+        to   { opacity: 1; transform: translateY(0); }
       }
 
-      .risk-indicator {
-        margin-bottom: 12px;
+      .url-status-badge {
+        background: rgba(27, 156, 133, 0.12);
+        border: 1px solid rgba(27, 156, 133, 0.25);
+        border-radius: 0.4rem;
+        padding: 5px 10px;
+        font-size: 10px;
+        font-weight: 600;
+        color: #138a73;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        width: 100%;
       }
 
       .risk-badge {
-        width: 50px;
-        height: 50px;
+        width: 56px;
+        height: 56px;
         border-radius: 50%;
-        margin: 0 auto 10px;
+        margin: 2px auto;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-weight: bold;
-        font-size: 14px;
-        color: white;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-      }
-
-      .risk-badge.low {
-        background: linear-gradient(135deg, var(--dash-success) 0%, #059669 100%);
-      }
-
-      .risk-badge.medium {
-        background: linear-gradient(135deg, var(--dash-warning) 0%, #d97706 100%);
-      }
-
-      .risk-badge.high {
-        background: linear-gradient(135deg, var(--dash-danger) 0%, #b91c1c 100%);
-      }
-
-      .risk-text {
-        font-size: 15px;
         font-weight: 700;
-        margin-bottom: 8px;
+        font-size: 15px;
+      }
+
+      .risk-badge.low    { background: rgba(27, 156, 133, 0.12); border: 3px solid #1b9c85; color: #1b9c85; }
+      .risk-badge.medium { background: rgba(247, 208, 96, 0.18); border: 3px solid #f7d060; color: #c9a000; }
+      .risk-badge.high   { background: rgba(255, 0, 96, 0.08);   border: 3px solid #ff0060; color: #ff0060; }
+
+      .risk-level-text {
+        font-size: 13px;
+        font-weight: 700;
         letter-spacing: 0.5px;
+        text-transform: uppercase;
       }
 
-      .risk-text.low {
-        color: var(--dash-success);
-      }
+      .risk-level-text.low    { color: #1b9c85; }
+      .risk-level-text.medium { color: #c9a000; }
+      .risk-level-text.high   { color: #ff0060; }
 
-      .risk-text.medium {
-        color: var(--dash-warning);
-      }
-
-      .risk-text.high {
-        color: var(--dash-danger);
+      .risk-score-text {
+        font-size: 12px;
+        color: #677483;
+        font-weight: 600;
       }
 
       .domain-info {
         font-size: 11px;
-        color: var(--dash-gray);
+        color: #677483;
         word-break: break-all;
         line-height: 1.4;
-        background: var(--dash-gray-light);
-        padding: 8px 10px;
-        border-radius: 6px;
-        margin-top: 10px;
+        background: var(--color-background);
+        padding: 7px 10px;
+        border-radius: 0.6rem;
+        width: 100%;
+        text-align: left;
+        border: 1px solid rgba(27, 156, 133, 0.15);
+      }
+
+      .scan-time {
+        font-size: 10px;
+        color: #7d8da1;
+        border-top: 1px solid rgba(27, 156, 133, 0.18);
+        padding-top: 6px;
+        width: 100%;
+        text-align: center;
       }
 
       #sureshop-url-scan-card .close {
@@ -281,7 +306,7 @@
         cursor: pointer;
         line-height: 1;
         padding: 6px;
-        color: white;
+        color: #fff;
         border-radius: 6px;
         transition: all 0.2s ease;
         width: 28px;
@@ -290,6 +315,8 @@
         align-items: center;
         justify-content: center;
         font-weight: bold;
+        position: relative;
+        z-index: 1;
       }
 
       #sureshop-url-scan-card .close:hover {
@@ -297,63 +324,46 @@
         transform: scale(1.1);
       }
 
-      /* Enhanced hover effect */
       #sureshop-url-scan-card:hover {
         transform: translateY(-2px);
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        box-shadow: 0 2.5rem 4rem rgba(27, 156, 133, 0.25);
       }
 
-      /* Smooth dismiss animation */
       #sureshop-url-scan-card.dismissing {
         opacity: 0;
         transform: translateY(-12px) scale(0.95);
         transition: all 0.25s ease;
       }
 
-      /* Update border color based on risk level */
-      #sureshop-url-scan-card.risk-low {
-        border-left-color: var(--dash-success);
-      }
-
-      #sureshop-url-scan-card.risk-medium {
-        border-left-color: var(--dash-warning);
-      }
-
-      #sureshop-url-scan-card.risk-high {
-        border-left-color: var(--dash-danger);
-      }
-
-      /* Success pulse animation for low risk */
-      #sureshop-url-scan-card.risk-low .risk-badge {
-        animation: successPulse 2s ease-in-out infinite;
-      }
+      #sureshop-url-scan-card.risk-low    { border-left-color: #1b9c85; }
+      #sureshop-url-scan-card.risk-medium { border-left-color: #f7d060; }
+      #sureshop-url-scan-card.risk-high   { border-left-color: #ff0060; }
 
       @keyframes successPulse {
-        0%, 100% { box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
-        50% { box-shadow: 0 4px 20px rgba(34, 197, 94, 0.4); }
+        0%, 100% { box-shadow: 0 4px 8px rgba(0,0,0,0.12); }
+        50%       { box-shadow: 0 4px 20px rgba(27, 156, 133, 0.45); }
       }
-
-      /* Warning pulse for medium risk */
-      #sureshop-url-scan-card.risk-medium .risk-badge {
-        animation: warningPulse 2s ease-in-out infinite;
-      }
-
       @keyframes warningPulse {
-        0%, 100% { box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
-        50% { box-shadow: 0 4px 20px rgba(245, 158, 11, 0.4); }
+        0%, 100% { box-shadow: 0 4px 8px rgba(0,0,0,0.12); }
+        50%       { box-shadow: 0 4px 20px rgba(247, 208, 96, 0.5); }
       }
-
-      /* Danger pulse for high risk */
-      #sureshop-url-scan-card.risk-high .risk-badge {
-        animation: dangerPulse 2s ease-in-out infinite;
-      }
-
       @keyframes dangerPulse {
-        0%, 100% { box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
-        50% { box-shadow: 0 4px 20px rgba(220, 38, 38, 0.4); }
+        0%, 100% { box-shadow: 0 4px 8px rgba(0,0,0,0.12); }
+        50%       { box-shadow: 0 4px 20px rgba(255, 0, 96, 0.4); }
       }
+
+      #sureshop-url-scan-card.risk-low    .risk-badge { animation: successPulse 2s ease-in-out infinite; }
+      #sureshop-url-scan-card.risk-medium .risk-badge { animation: warningPulse 2s ease-in-out infinite; }
+      #sureshop-url-scan-card.risk-high   .risk-badge { animation: dangerPulse  2s ease-in-out infinite; }
     `;
 
+    if (!document.getElementById('sureshop-fa-css')) {
+      const faLink = document.createElement('link');
+      faLink.id = 'sureshop-fa-css';
+      faLink.rel = 'stylesheet';
+      faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css';
+      document.head.appendChild(faLink);
+    }
     document.head.appendChild(style);
     document.body.appendChild(card);
 
@@ -381,12 +391,14 @@
     const scanStatus = card.querySelector(".scan-status");
     const scanResults = card.querySelector(".scan-results");
     const riskBadge = card.querySelector(".risk-badge");
-    const riskText = card.querySelector(".risk-text");
+    const riskLevelText = card.querySelector(".risk-level-text");
+    const riskScoreText = card.querySelector(".risk-score-text");
     const domainInfo = card.querySelector(".domain-info");
+    const scanTime = card.querySelector(".scan-time");
 
     // Hide loading, show results
     scanStatus.style.display = "none";
-    scanResults.style.display = "block";
+    scanResults.style.display = "flex";
 
     // Update risk level styling
     const riskLevel = result.risk_level.toLowerCase();
@@ -397,12 +409,19 @@
     riskBadge.className = `risk-badge ${riskLevel}`;
     riskBadge.textContent = result.risk_score;
 
-    // Update text
-    riskText.className = `risk-text ${riskLevel}`;
-    riskText.textContent = `${result.risk_level.toUpperCase()} RISK`;
+    // Update risk level text
+    riskLevelText.className = `risk-level-text ${riskLevel}`;
+    riskLevelText.textContent = `URL Risk: ${result.risk_level.toUpperCase()}`;
+
+    // Update risk score text
+    riskScoreText.textContent = `Risk Score: ${result.risk_score} / 100`;
 
     // Update domain info
-    domainInfo.textContent = `${result.domain} • Risk Score: ${result.risk_score}/100`;
+    domainInfo.textContent = result.domain;
+
+    // Update scan time
+    const ts = new Date().toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    scanTime.textContent = `Scanned: ${ts}`;
 
     // Auto-dismiss after showing results for 10 seconds
     setTimeout(() => {
@@ -520,7 +539,7 @@
         console.log("Universal: Timeout reached, no results found for tab:", tabId);
         const card = document.getElementById("sureshop-url-scan-card");
         if (card && card.querySelector(".scan-status").style.display !== "none") {
-          const statusText = card.querySelector(".scan-status p");
+          const statusText = card.querySelector(".scanning-badge span");
           statusText.textContent = "Scan completed";
           
           setTimeout(() => {
