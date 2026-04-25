@@ -12,6 +12,10 @@ const activateBtn = document.getElementById("activateBtn");
 const activationKeyInput = document.getElementById("activationKey");
 const activationMessage = document.getElementById("activationMessage");
 
+// Progressive collection state (Shopee only)
+let lastShopeeProductData = null;
+let progressiveState = "idle"; // "idle" | "scanning" | "stopped"
+
 function showActivationMessage(text, isError = true) {
   activationMessage.textContent = text;
   activationMessage.className = isError ? "activation-msg activation-msg--error" : "activation-msg activation-msg--success";
@@ -163,6 +167,8 @@ function showRiskAssessment(riskScore, riskLevel, description) {
     : '';
 
   // Clear the output completely and create clean HTML
+  // Preserve the live-reviews section if one exists (progressive collection)
+  const existingReviews = document.getElementById("sureshop-reviews-output");
   output.innerHTML = '';
   output.style.padding = '20px';
   output.style.textAlign = 'center';
@@ -199,6 +205,9 @@ function showRiskAssessment(riskScore, riskLevel, description) {
   `;
   
   output.appendChild(container);
+
+  // Re-attach the live-reviews section so it survives risk-card re-renders
+  if (existingReviews) output.appendChild(existingReviews);
 }
 
 // Enhanced manual scan function - PRODUCTS ONLY
@@ -327,6 +336,9 @@ function performScan(isAutomatic = false, withReviews = false) {
           description: response.description || null
         };
 
+        // Cache for progressive restart
+        if (currentTab.url.includes("shopee.ph")) lastShopeeProductData = productData;
+
         console.log("Product data to send to scan.php:", productData);
 
         const scanResponse = await fetch(
@@ -375,7 +387,30 @@ function performScan(isAutomatic = false, withReviews = false) {
             const isLazada = currentTab.url.includes("lazada.com.ph");
             const isFacebook = currentTab.url.includes("facebook.com") &&
                                /\/marketplace\/item\/\d+/.test(currentTab.url);
-            if (isShopee || isLazada || isFacebook) {
+
+            if (isShopee) {
+              // -------------------------------------------------------
+              // Progressive collection: start the MutationObserver in
+              // the content script and show whatever is visible now.
+              // The observer fires automatically whenever the user
+              // navigates to a new comment page.
+              // -------------------------------------------------------
+              chrome.tabs.sendMessage(
+                currentTab.id,
+                { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
+                () => {
+                  setCommentsButtonState("scanning");
+                  // Small delay to let initial harvest complete, then show
+                  setTimeout(() => {
+                    chrome.tabs.sendMessage(
+                      currentTab.id,
+                      { type: "GET_PROGRESSIVE_REVIEWS" },
+                      (r) => appendReviewsToOutput(r?.reviews || [], false)
+                    );
+                  }, 400);
+                }
+              );
+            } else if (isLazada || isFacebook) {
               const delay = isLazada ? 600 : 0;
               setTimeout(() => {
                 chrome.tabs.sendMessage(currentTab.id, { type: "EXTRACT_REVIEWS" }, (reviewResponse) => {
@@ -403,14 +438,82 @@ function performScan(isAutomatic = false, withReviews = false) {
   });
 }
 
+// -----------------------------------------------------------------------
+// Progressive update listener — fires while the side panel is open whenever
+// the Shopee content script finishes re-analyzing a new review page.
+// -----------------------------------------------------------------------
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "SHOPEE_SCAN_UPDATED") {
+    console.log("[Popup] Progressive update:", message.risk_score, message.risk_level);
+    showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null);
+    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
+      appendReviewsToOutput(message.reviews, false);
+    }
+  }
+
+  if (message.type === "SHOPEE_PROGRESSIVE_STOPPED") {
+    setCommentsButtonState("stopped");
+    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
+      appendReviewsToOutput(message.reviews, false);
+    }
+    if (message.risk_score !== undefined && message.risk_level) {
+      showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null);
+    }
+  }
+
+  if (message.type === "SHOPEE_PROGRESSIVE_RESTARTED") {
+    setCommentsButtonState("scanning");
+  }
+});
+
 // Normal scan
 scanBtn.addEventListener("click", () => {
   performScan(false, false);
 });
 
-// Deep Scan = normal scan + reviews
+// Deep Scan / Stop / Restart — state machine on commentsBtn
 const commentsBtn = document.getElementById("commentsBtn");
+
+function setCommentsButtonState(state) {
+  progressiveState = state;
+  if (state === "scanning") {
+    commentsBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Collecting';
+    commentsBtn.style.background = '#e74c3c';
+    commentsBtn.disabled = false;
+  } else if (state === "stopped") {
+    commentsBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Collection';
+    commentsBtn.style.background = '#1b9c85';
+    commentsBtn.disabled = false;
+  } else {
+    commentsBtn.innerHTML = '<i class="fas fa-layer-group"></i> Deep Scan';
+    commentsBtn.style.background = '';
+    commentsBtn.disabled = false;
+    progressiveState = "idle";
+  }
+}
+
 commentsBtn.addEventListener("click", () => {
+  if (progressiveState === "scanning") {
+    // User stops collection
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: "STOP_PROGRESSIVE_COLLECTION" });
+      }
+    });
+    return;
+  }
+
+  if (progressiveState === "stopped") {
+    // User restarts collection with the same product data
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: "SHOPEE_RESTART_COLLECTION" });
+      }
+    });
+    return;
+  }
+
+  // idle — normal deep scan
   performScan(false, true);
 });
 
@@ -482,6 +585,7 @@ function appendReviewsToOutput(reviews, isLazada = false) {
   };
 
   const divider = document.createElement("div");
+  divider.id = "sureshop-reviews-output";
   divider.style.cssText = "margin-top:14px;";
 
   if (reviews.length === 0) {
@@ -519,16 +623,24 @@ function appendReviewsToOutput(reviews, isLazada = false) {
       </div>`;
   }
 
-  output.appendChild(divider);
+  // Replace existing reviews section in-place (progressive updates) or append fresh
+  const existing = document.getElementById("sureshop-reviews-output");
+  if (existing) {
+    existing.replaceWith(divider);
+  } else {
+    output.appendChild(divider);
+  }
 }
 
 function resetCommentsButton() {
-  commentsBtn.innerHTML = '<i class="fas fa-layer-group"></i> Deep Scan';
-  commentsBtn.disabled = false;
+  setCommentsButtonState("idle");
 }
 
 function resetButton() {
   scanBtn.innerHTML = '<i class="fas fa-shield-alt"></i> Normal Scan';
   scanBtn.disabled = false;
-  resetCommentsButton();
+  // Only reset commentsBtn if progressive collection hasn\'t started
+  if (progressiveState === "idle") {
+    resetCommentsButton();
+  }
 }

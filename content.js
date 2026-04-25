@@ -6,6 +6,11 @@
 
   console.log("ScamGuard content.js loaded (Shopee)");
 
+  // ===============================
+  // API Base (mirrors popup.js)
+  // ===============================
+  const SURESHOP_API_BASE = "http://localhost/php/sureshopwebsite/app/controller";
+
 function showScanCard() {
   if (!/-i\.\d+\.\d+/.test(location.href)) return;
   if (document.getElementById("sureshopph-scan-card")) return;
@@ -264,11 +269,32 @@ function showScanCard() {
   let latestData = null;
   let dataStale = true;
 
+  // ===============================
+  // Progressive Review Collection State
+  // ===============================
+  let progressiveReviews = [];      // all reviews harvested across pages
+  let seenReviewKeys = new Set();   // dedup by username|date|text-prefix
+  let reviewMutationObserver = null;
+  let progressiveActive = false;
+  let progressiveScanData = null;   // product data payload used for resends
+  let progressiveDebounceTimer = null;
+  let lastKnownCmtidSet = new Set(); // actual cmtid attr values visible in DOM
+  let lastProgressiveScore = null;   // most recent score returned by backend
+  let lastProgressiveLevel = null;   // most recent level returned by backend
+
   setInterval(() => {
     if (location.href !== lastUrl) {
       console.log("URL changed (SPA):", lastUrl, "→", location.href);
       lastUrl = location.href;
       dataStale = true;
+      // Reset progressive collection — new product page, fresh slate (no stopped card)
+      stopProgressiveCollection(false);
+      progressiveReviews = [];
+      seenReviewKeys = new Set();
+      progressiveScanData = null;
+      lastKnownCmtidSet = new Set();
+      lastProgressiveScore = null;
+      lastProgressiveLevel = null;
       checkAndShowCard();
       
       const isProductPage = /-i\.\d+\.\d+/.test(location.href);
@@ -524,9 +550,30 @@ function showScanCard() {
 
     if (reviewContainers.length > 0) {
       for (const container of reviewContainers.slice(0, maxReviews)) {
-        // Username
-        const userLink = container.querySelector('a[href*="/shop/"]');
-        const username = userLink ? cleanText(userLink.textContent) : null;
+        // Username — try any anchor that looks like a profile link first,
+        // then fall back to scanning all elements for short username-shaped text.
+        const userLink = container.querySelector(
+          'a[href*="/shop/"], a[href*="/user/"], a[href*="/profile/"], a[href*="/buyer/"]'
+        );
+        const username = (() => {
+          if (userLink) {
+            const t = cleanText(userLink.textContent);
+            if (t && t.length >= 2) return t;
+          }
+          // Fall back: first element whose full textContent is short,
+          // single-token (or short phrase), and not metadata.
+          const allEls = [...container.querySelectorAll('*')];
+          const candidate = allEls.find(el => {
+            const t = cleanText(el.textContent);
+            return t && t.length >= 2 && t.length <= 40 &&
+              !t.includes('\n') &&
+              !/\d{4}-\d{2}-\d{2}/.test(t) &&
+              !/^[\u20b1$\u20ac\u00a3]/.test(t) &&
+              !/^\d+\s*(sold|star|rating)/i.test(t) &&
+              !/^(helpful|like|reply|report|see more|seller|variation|product)/i.test(t);
+          });
+          return candidate ? cleanText(candidate.textContent) : "Anonymous";
+        })();
 
         // Stars — count filled star SVGs (stable class "icon-rating-solid")
         const filledStars = Math.min(
@@ -546,8 +593,16 @@ function showScanCard() {
         const variantMatch = dateText ? dateText.match(/\|\s*Variation:\s*(.+)/i) : null;
         const variant = variantMatch ? cleanText(variantMatch[1]) : null;
 
-        // Review text — longest leaf that isn't username, date, or metadata
-        const text = allLeaves
+        // Review text — longest leaf that isn't username, date, or metadata.
+        // Truncate at the "Seller's Response" label so seller reply text is excluded.
+        const sellerResponseIdx = allLeaves.findIndex(el =>
+          /^seller'?s?\s+response/i.test(el.textContent.trim())
+        );
+        const buyerLeaves = sellerResponseIdx !== -1
+          ? allLeaves.slice(0, sellerResponseIdx)
+          : allLeaves;
+
+        const text = buyerLeaves
           .map(el => cleanText(el.textContent))
           .filter(t =>
             t &&
@@ -556,16 +611,19 @@ function showScanCard() {
             !/^\d{4}-\d{2}-\d{2}/.test(t) &&
             !/^[₱$€£]/.test(t) &&
             !/^\d+\s*(sold|star|rating)/i.test(t) &&
-            !/^seller'?s?\s+response/i.test(t) &&
-            !/^(helpful|like|reply|report|see more)/i.test(t)
+            !/^(helpful|like|reply|report|see more)/i.test(t) &&
+            // Skip bare username tokens — real review text has a space, punctuation, or is long
+            (t.includes(' ') || /[^a-zA-Z0-9_*.]/.test(t) || t.length >= 20)
           )
           .sort((a, b) => b.length - a.length)[0] || null;
 
-        if (text) {
+        const reviewText = text || "(No written review)";
+
+        if (username || filledStars) {
           reviews.push({
             username: username || "Anonymous",
             rating_stars: filledStars || null,
-            text,
+            text: reviewText,
             date: datePart || null,
             variant
           });
@@ -612,6 +670,324 @@ function showScanCard() {
     }
 
     return { value: reviews, confidence: reviews.length > 0 ? "medium" : "low" };
+  }
+
+  // ===============================
+  // Progressive Review Collection
+  // ===============================
+
+  /** Stable key for deduplication */
+  function makeReviewKey(r) {
+    return `${r.username || ""}|${r.date || ""}|${(r.text || "").slice(0, 60)}`;
+  }
+
+  /**
+   * Scan all currently visible [data-cmtid] containers and return only the
+   * ones not yet in seenReviewKeys (updates the set as a side-effect).
+   */
+  function harvestNewReviews() {
+    const newReviews = [];
+    for (const container of document.querySelectorAll("[data-cmtid]")) {
+      const allLeaves = [...container.querySelectorAll("*")]
+        .filter(el => el.childElementCount === 0);
+
+      // Username — try any anchor that looks like a profile link first,
+      // then fall back to scanning all elements for short username-shaped text.
+      const userLink = container.querySelector(
+        'a[href*="/shop/"], a[href*="/user/"], a[href*="/profile/"], a[href*="/buyer/"]'
+      );
+      const username = (() => {
+        if (userLink) {
+          const t = cleanText(userLink.textContent);
+          if (t && t.length >= 2) return t;
+        }
+        // Fall back: first element whose full textContent is short,
+        // single-token (or short phrase), and not metadata.
+        const allEls = [...container.querySelectorAll('*')];
+        const candidate = allEls.find(el => {
+          const t = cleanText(el.textContent);
+          return t && t.length >= 2 && t.length <= 40 &&
+            !t.includes('\n') &&
+            !/\d{4}-\d{2}-\d{2}/.test(t) &&
+            !/^[\u20b1$\u20ac\u00a3]/.test(t) &&
+            !/^\d+\s*(sold|star|rating)/i.test(t) &&
+            !/^(helpful|like|reply|report|see more|seller|variation|product)/i.test(t);
+        });
+        return candidate ? cleanText(candidate.textContent) : "Anonymous";
+      })();
+
+      const filledStars = Math.min(
+        container.querySelectorAll('[class*="icon-rating-solid"]').length, 5
+      );
+
+      const dateLine = allLeaves.find(el =>
+        /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(el.textContent.trim())
+      );
+      const dateText = dateLine ? cleanText(dateLine.textContent) : null;
+      const datePart = dateText ? dateText.split("|")[0].trim() : null;
+      const variantMatch = dateText ? dateText.match(/\|\s*Variation:\s*(.+)/i) : null;
+      const variant = variantMatch ? cleanText(variantMatch[1]) : null;
+
+      // Truncate leaves at the "Seller's Response" label so seller reply text is excluded.
+      const sellerResponseIdx = allLeaves.findIndex(el =>
+        /^seller'?s?\s+response/i.test(el.textContent.trim())
+      );
+      const buyerLeaves = sellerResponseIdx !== -1
+        ? allLeaves.slice(0, sellerResponseIdx)
+        : allLeaves;
+
+      const text = buyerLeaves
+        .map(el => cleanText(el.textContent))
+        .filter(t =>
+          t && t.length > 5 && t !== username &&
+          !/^\d{4}-\d{2}-\d{2}/.test(t) &&
+          !/^[₱$€£]/.test(t) &&
+          !/^\d+\s*(sold|star|rating)/i.test(t) &&
+          !/^(helpful|like|reply|report|see more)/i.test(t) &&
+          // Skip bare username tokens — real review text has a space, punctuation, or is long
+          (t.includes(' ') || /[^a-zA-Z0-9_*.]/.test(t) || t.length >= 20)
+        )
+        .sort((a, b) => b.length - a.length)[0] || null;
+
+      const reviewText = text || "(No written review)";
+
+      const review = { username, rating_stars: filledStars || null, text: reviewText, date: datePart, variant };
+      const key = makeReviewKey(review);
+      if (!seenReviewKeys.has(key)) {
+        seenReviewKeys.add(key);
+        newReviews.push(review);
+      }
+    }
+    return newReviews;
+  }
+
+  /** Ensure the scan card is visible, recreating it if dismissed */
+  function ensureScanCard() {
+    if (!document.getElementById("sureshopph-scan-card")) showScanCard();
+  }
+
+  /** Notify the side panel that progressive collection stopped */
+  function notifyPopupStopped() {
+    chrome.runtime.sendMessage({
+      type: "SHOPEE_PROGRESSIVE_STOPPED",
+      reviews: progressiveReviews,
+      risk_score: lastProgressiveScore,
+      risk_level: lastProgressiveLevel
+    }).catch(() => {});
+  }
+
+  /** Notify the side panel that progressive collection (re)started */
+  function notifyPopupRestarted() {
+    chrome.runtime.sendMessage({ type: "SHOPEE_PROGRESSIVE_RESTARTED" }).catch(() => {});
+  }
+
+  /**
+   * Update the overlay to "actively scanning" state.
+   * score/level may be null on the first call before any backend response.
+   */
+  function setCardScanningState(score, level, reviewCount) {
+    ensureScanCard();
+    const card = document.getElementById("sureshopph-scan-card");
+    if (!card) return;
+
+    // Cancel the auto-dismiss started by showScanCard
+    card._noAutoDismiss = true;
+
+    const colorMap = { Low: "#1b9c85", Medium: "#e67e22", High: "#e74c3c" };
+    const color = (score !== null && level) ? (colorMap[level] || "#677483") : "#1b9c85";
+    const scoreHtml = (score !== null && level)
+      ? `<div style="font-size:11px;color:${color};font-weight:600;">${level} Risk · ${score}/100</div>`
+      : "";
+
+    card.querySelector(".body").innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;color:#1b9c85;text-transform:uppercase;
+                    letter-spacing:.5px;background:rgba(27,156,133,.12);border:1px solid rgba(27,156,133,.25);
+                    border-radius:.4rem;padding:5px 10px;display:inline-flex;align-items:center;gap:5px;">
+          <i class="fas fa-circle-notch fa-spin"></i> Scanning Comments...
+        </div>
+        <div style="font-size:11px;color:#677483;">${reviewCount} review${reviewCount !== 1 ? "s" : ""} collected</div>
+        ${scoreHtml}
+        <button id="sureshop-stop-btn"
+          style="margin-top:4px;padding:6px 16px;border:none;border-radius:.5rem;
+                 background:#e74c3c;color:#fff;font-size:11px;font-weight:700;
+                 cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;">
+          <i class="fas fa-stop"></i> Stop
+        </button>
+      </div>`;
+
+    card.querySelector("#sureshop-stop-btn").onclick = () => {
+      stopProgressiveCollection(true);
+    };
+  }
+
+  /**
+   * Update the overlay to "stopped / final score" state.
+   */
+  function setCardStoppedState(score, level, reviewCount) {
+    ensureScanCard();
+    const card = document.getElementById("sureshopph-scan-card");
+    if (!card) return;
+
+    const colorMap = { Low: "#1b9c85", Medium: "#e67e22", High: "#e74c3c" };
+    const color = (level && colorMap[level]) || "#677483";
+    const scoreLabel = (score !== null && level)
+      ? `${level.toUpperCase()} RISK · ${score}/100`
+      : "Score pending";
+
+    card.querySelector(".body").innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;color:${color};text-transform:uppercase;
+                    letter-spacing:.5px;background:${color}1a;border:1px solid ${color}40;
+                    border-radius:.4rem;padding:5px 10px;display:inline-flex;align-items:center;gap:5px;">
+          <i class="fas fa-lock"></i> Final Score
+        </div>
+        <div style="font-size:13px;font-weight:700;color:${color};">${scoreLabel}</div>
+        <div style="font-size:11px;color:#677483;">Based on ${reviewCount} review${reviewCount !== 1 ? "s" : ""}</div>
+        <button id="sureshop-restart-btn"
+          style="margin-top:4px;padding:6px 16px;border:none;border-radius:.5rem;
+                 background:#1b9c85;color:#fff;font-size:11px;font-weight:700;
+                 cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;">
+          <i class="fas fa-redo"></i> Restart Scan
+        </button>
+      </div>`;
+
+    card.querySelector("#sureshop-restart-btn").onclick = () => {
+      if (progressiveScanData) {
+        startProgressiveCollection(progressiveScanData);
+        notifyPopupRestarted();
+      }
+    };
+  }
+
+  /** Re-call backend with full accumulated review list and update UI */
+  async function sendProgressiveUpdate() {
+    if (!progressiveScanData) return;
+
+    const { accessToken } = await chrome.storage.local.get("accessToken");
+    if (!accessToken) return;
+
+    try {
+      const payload = { ...progressiveScanData, reviews: progressiveReviews };
+      const res = await fetch(`${SURESHOP_API_BASE}/scan.php`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) return;
+
+      const result = await res.json();
+      if (result.risk_score === undefined) return;
+
+      // Store latest score/level and update the on-page overlay
+      lastProgressiveScore = result.risk_score;
+      lastProgressiveLevel = result.risk_level;
+      setCardScanningState(result.risk_score, result.risk_level, progressiveReviews.length);
+
+      // Persist for popup
+      await chrome.storage.local.set({
+        lastAutoScanResult: {
+          type: "product",
+          risk_score: result.risk_score,
+          risk_level: result.risk_level,
+          description: progressiveScanData.description || null,
+          timestamp: Date.now(),
+          url: location.href
+        }
+      });
+
+      // Notify popup if it is currently open
+      chrome.runtime.sendMessage({
+        type: "SHOPEE_SCAN_UPDATED",
+        risk_score: result.risk_score,
+        risk_level: result.risk_level,
+        reviews: progressiveReviews
+      }).catch(() => { /* popup may not be open */ });
+
+    } catch (e) {
+      console.warn("[SureShop] Progressive scan update failed:", e.message);
+    }
+  }
+
+  /** Debounced MutationObserver callback — fires when the visible [data-cmtid] set changes */
+  function onReviewDomChange() {
+    if (!progressiveActive) return;
+    // Quickly bail if nothing cmtid-related changed yet (avoids expensive work on every mutation)
+    clearTimeout(progressiveDebounceTimer);
+    progressiveDebounceTimer = setTimeout(() => {
+      const currentCmtids = new Set(
+        [...document.querySelectorAll("[data-cmtid]")]
+          .map(el => el.getAttribute("data-cmtid"))
+      );
+      // Changed = different size OR any id that wasn't there before
+      // This catches page-replacement (same count, different ids) as well as appends
+      const hasChanged =
+        currentCmtids.size !== lastKnownCmtidSet.size ||
+        [...currentCmtids].some(id => !lastKnownCmtidSet.has(id));
+      if (!hasChanged) return;
+      lastKnownCmtidSet = currentCmtids;
+
+      const newOnes = harvestNewReviews();
+      if (newOnes.length > 0) {
+        progressiveReviews.push(...newOnes);
+        console.log(
+          `[SureShop] Progressive: +${newOnes.length} reviews (total: ${progressiveReviews.length})`
+        );
+        sendProgressiveUpdate();
+      }
+    }, 800);
+  }
+
+  /** Start watching for new review pages the user navigates to */
+  function startProgressiveCollection(scanData) {
+    stopProgressiveCollection(false); // silent cleanup of any previous session
+
+    progressiveReviews = [];
+    seenReviewKeys = new Set();
+    lastKnownCmtidSet = new Set();
+    lastProgressiveScore = null;
+    lastProgressiveLevel = null;
+    progressiveScanData = scanData;
+    progressiveActive = true;
+
+    // Harvest reviews already visible on the current page
+    const initial = harvestNewReviews();
+    progressiveReviews.push(...initial);
+    // Snapshot the cmtid attribute values currently in the DOM
+    lastKnownCmtidSet = new Set(
+      [...document.querySelectorAll("[data-cmtid]")]
+        .map(el => el.getAttribute("data-cmtid"))
+    );
+    console.log(`[SureShop] Progressive collection started. Initial reviews: ${progressiveReviews.length}`);
+
+    // Always observe body — pagination controls live outside the ratings section
+    reviewMutationObserver = new MutationObserver(onReviewDomChange);
+    reviewMutationObserver.observe(document.body, { childList: true, subtree: true });
+
+    // Show "Scanning Comments..." state on the overlay immediately
+    setCardScanningState(null, null, progressiveReviews.length);
+  }
+
+  /**
+   * Stop the MutationObserver.
+   * showCard=true (default): update overlay to final/stopped state and notify popup.
+   * showCard=false: silent stop used for SPA navigation and internal resets.
+   */
+  function stopProgressiveCollection(showCard = true) {
+    const wasActive = progressiveActive;
+    progressiveActive = false;
+    if (reviewMutationObserver) {
+      reviewMutationObserver.disconnect();
+      reviewMutationObserver = null;
+    }
+    clearTimeout(progressiveDebounceTimer);
+    if (showCard && wasActive) {
+      setCardStoppedState(lastProgressiveScore, lastProgressiveLevel, progressiveReviews.length);
+      notifyPopupStopped();
+    }
   }
 
   function parseReviewContainer(container) {
@@ -768,6 +1144,35 @@ function showScanCard() {
 
     if (message.type === "GET_CURRENT_DATA") {
       sendResponse({ stale: dataStale, data: latestData });
+      return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Progressive review collection handlers
+    // ------------------------------------------------------------------
+    if (message.type === "START_PROGRESSIVE_COLLECTION") {
+      startProgressiveCollection(message.scanData || null);
+      sendResponse({ ok: true, initialCount: progressiveReviews.length });
+      return true;
+    }
+
+    if (message.type === "STOP_PROGRESSIVE_COLLECTION") {
+      stopProgressiveCollection(true); // user-initiated: show stopped card
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    if (message.type === "SHOPEE_RESTART_COLLECTION") {
+      if (progressiveScanData) {
+        startProgressiveCollection(progressiveScanData);
+        notifyPopupRestarted();
+      }
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    if (message.type === "GET_PROGRESSIVE_REVIEWS") {
+      sendResponse({ reviews: progressiveReviews, count: progressiveReviews.length });
       return true;
     }
 

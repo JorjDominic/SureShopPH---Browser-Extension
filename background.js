@@ -52,6 +52,8 @@ async function initializeExtension() {
   debugLog("🔧", "=== INITIALIZING EXTENSION ===");
   try {
     isInitialized = true;
+    // Open the side panel when the toolbar icon is clicked
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
     debugLog("✅", "Extension initialized successfully");
     updateAllTabs();
   } catch (error) {

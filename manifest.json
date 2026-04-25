@@ -8,8 +8,12 @@
     "activeTab",
     "scripting",
     "storage",
-    "webNavigation"
+    "webNavigation",
+    "sidePanel"
   ],
+  "side_panel": {
+    "default_path": "popup.html"
+  },
   "host_permissions": [
     "https://shopee.ph/*",
     "https://www.lazada.com.ph/*",
@@ -52,7 +56,6 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "popup.html",
     "default_title": "SureShop - Scan for scams",
     "default_icon": {
       "16": "icon16.png",
