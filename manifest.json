@@ -15,14 +15,21 @@
     "default_path": "popup.html"
   },
   "host_permissions": [
-    "https://shopee.ph/*",
-    "https://www.lazada.com.ph/*",
-    "https://lazada.com.ph/*",
-    "https://www.facebook.com/marketplace/*",
-    "https://facebook.com/marketplace/*",
-    "http://localhost/*",
-    "https://*/*",
-    "http://*/*"
+    "https://*.shopee.ph/*",
+    "https://*.lazada.com.ph/*",
+    "https://*.facebook.com/marketplace/*",
+    "https://*.tiktok.com/*",
+    "https://*.zalora.com.ph/*",
+    "https://*.carousell.ph/*",
+    "https://*.shein.com/*",
+    "https://*.temu.com/*",
+    "https://*.amazon.com/*",
+    "https://*.ebay.ph/*",
+    "https://*.aliexpress.com/*",
+    "https://*.beautymnl.com/*",
+    "https://*.kimstore.com/*",
+    "https://*.galleon.ph/*",
+    "http://localhost/*"
   ],
   "icons": {
     "16": "icon16.png",
@@ -32,22 +39,34 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://shopee.ph/*"],
+      "matches": ["https://*.shopee.ph/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.lazada.com.ph/*", "https://lazada.com.ph/*"],
+      "matches": ["https://*.lazada.com.ph/*"],
       "js": ["content_lazada.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.facebook.com/marketplace/*", "https://facebook.com/marketplace/*"],
+      "matches": ["https://*.facebook.com/marketplace/*"],
       "js": ["content_facebook.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "https://*.tiktok.com/*",
+        "https://*.zalora.com.ph/*",
+        "https://*.carousell.ph/*",
+        "https://*.shein.com/*",
+        "https://*.temu.com/*",
+        "https://*.amazon.com/*",
+        "https://*.ebay.ph/*",
+        "https://*.aliexpress.com/*",
+        "https://*.beautymnl.com/*",
+        "https://*.kimstore.com/*",
+        "https://*.galleon.ph/*"
+      ],
       "js": ["universal_content.js"],
       "run_at": "document_idle"
     }

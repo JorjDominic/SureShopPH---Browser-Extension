@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   </head>
   <body>
+    <div id="toastContainer" aria-live="polite"></div>
     <div id="popup-root">
     <!-- Header Section -->
     <div class="header">
@@ -29,15 +30,50 @@
 
     <!-- Scan Section -->
     <div id="scanSection" style="display:none;">
+      <!-- Current page status banner (auto-populated) -->
+      <div id="pageStatus" class="page-status page-status--neutral">
+        <i class="fas fa-circle-notch fa-spin"></i>
+        <span>Detecting current page…</span>
+      </div>
+
       <div class="scan-section">
         <button id="scanBtn"><i class="fas fa-shield-alt"></i> Normal Scan</button>
         <button id="commentsBtn"><i class="fas fa-layer-group"></i> Deep Scan</button>
         <button id="unbindBtn"><i class="fas fa-unlink"></i> Unbind Activation Key</button>
       </div>
       <div id="unbindMessage"></div>
-      
+
       <div class="output-container">
         <pre id="output"></pre>
+
+        <!-- Supported platforms reference card -->
+        <div id="supportedPlatformsCard" class="platforms-card">
+          <div class="platforms-card-title">
+            <i class="fas fa-store"></i> Supported Shopping Sites
+          </div>
+          <div class="platforms-card-desc">
+            SureShop scans product pages and URLs on these platforms only:
+          </div>
+          <div class="platforms-pills">
+            <span class="platform-pill platform-pill--full"><i class="fas fa-shield-alt"></i> Shopee</span>
+            <span class="platform-pill platform-pill--full"><i class="fas fa-shield-alt"></i> Lazada</span>
+            <span class="platform-pill platform-pill--full"><i class="fas fa-shield-alt"></i> FB Marketplace</span>
+            <span class="platform-pill">TikTok Shop</span>
+            <span class="platform-pill">Zalora</span>
+            <span class="platform-pill">Carousell</span>
+            <span class="platform-pill">Shein</span>
+            <span class="platform-pill">Temu</span>
+            <span class="platform-pill">Amazon</span>
+            <span class="platform-pill">eBay PH</span>
+            <span class="platform-pill">AliExpress</span>
+            <span class="platform-pill">BeautyMNL</span>
+            <span class="platform-pill">Kimstore</span>
+            <span class="platform-pill">Galleon</span>
+          </div>
+          <div class="platforms-card-legend">
+            <i class="fas fa-shield-alt"></i> Full product analysis &nbsp;·&nbsp; others get URL safety check
+          </div>
+        </div>
       </div>
 
       <div class="privacy-notice">

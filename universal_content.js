@@ -1,4 +1,26 @@
 (() => {
+  // -----------------------------------------------------------------------
+  // Defense-in-depth: even if the manifest matches widen, this script will
+  // only run on the supported Filipino shopping platforms.
+  // Keep in sync with manifest.json content_scripts matches.
+  // -----------------------------------------------------------------------
+  const SUPPORTED_DOMAINS = [
+    "tiktok.com",
+    "zalora.com.ph",
+    "carousell.ph",
+    "shein.com",
+    "temu.com",
+    "amazon.com",
+    "ebay.ph",
+    "aliexpress.com",
+    "beautymnl.com",
+    "kimstore.com",
+    "galleon.ph"
+  ];
+  const _host = location.hostname.toLowerCase();
+  const _isSupported = SUPPORTED_DOMAINS.some(d => _host === d || _host.endsWith("." + d));
+  if (!_isSupported) return;
+
   console.log("Universal URL Scanner loaded for:", location.hostname);
 
   let currentScanId = null;

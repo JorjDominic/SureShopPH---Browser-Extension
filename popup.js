@@ -4,6 +4,58 @@
 // -----------------------------------------------------------------------
 const SURESHOP_API_BASE = "http://localhost/php/sureshopwebsite/app/controller";
 
+// -----------------------------------------------------------------------
+// Supported shopping platforms (keep in sync with manifest.json)
+// fullScan = product extraction + risk score + reviews
+// urlOnly  = URL safety check only
+// -----------------------------------------------------------------------
+const PLATFORMS = {
+  shopee:      { domain: "shopee.ph",       label: "Shopee",          fullScan: true,  productPath: /-i\.\d+\.\d+/ },
+  lazada:      { domain: "lazada.com.ph",   label: "Lazada",          fullScan: true,  productPath: /\/products\/.*-i\d+-s\d+\.html/ },
+  facebook:    { domain: "facebook.com",    label: "FB Marketplace",  fullScan: true,  productPath: /\/marketplace\/item\/\d+/ },
+  tiktok:      { domain: "tiktok.com",      label: "TikTok",          fullScan: false },
+  zalora:      { domain: "zalora.com.ph",   label: "Zalora",          fullScan: false },
+  carousell:   { domain: "carousell.ph",    label: "Carousell",       fullScan: false },
+  shein:       { domain: "shein.com",       label: "Shein",           fullScan: false },
+  temu:        { domain: "temu.com",        label: "Temu",            fullScan: false },
+  amazon:      { domain: "amazon.com",      label: "Amazon",          fullScan: false },
+  ebay:        { domain: "ebay.ph",         label: "eBay PH",         fullScan: false },
+  aliexpress:  { domain: "aliexpress.com",  label: "AliExpress",      fullScan: false },
+  beautymnl:   { domain: "beautymnl.com",   label: "BeautyMNL",       fullScan: false },
+  kimstore:    { domain: "kimstore.com",    label: "Kimstore",        fullScan: false },
+  galleon:     { domain: "galleon.ph",      label: "Galleon",         fullScan: false }
+};
+
+function detectPlatform(url) {
+  if (!url) return null;
+  let host;
+  try { host = new URL(url).hostname.toLowerCase(); } catch (_) { return null; }
+  for (const [key, p] of Object.entries(PLATFORMS)) {
+    if (host === p.domain || host.endsWith("." + p.domain)) {
+      const isProduct = p.fullScan && p.productPath ? p.productPath.test(url) : false;
+      return { key, ...p, isProduct };
+    }
+  }
+  return null;
+}
+
+// -----------------------------------------------------------------------
+// Toast notifications
+// -----------------------------------------------------------------------
+function showToast(message, type = "info", durationMs = 3500) {
+  const container = document.getElementById("toastContainer");
+  if (!container) return;
+  const icons = { info: "fa-info-circle", success: "fa-check-circle", warning: "fa-exclamation-triangle", error: "fa-times-circle" };
+  const toast = document.createElement("div");
+  toast.className = `toast toast--${type}`;
+  toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i><span>${message}</span>`;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add("dismissing");
+    setTimeout(() => toast.remove(), 250);
+  }, durationMs);
+}
+
 const output = document.getElementById("output");
 const scanBtn = document.getElementById("scanBtn");
 const activationSection = document.getElementById("activationSection");
@@ -12,8 +64,9 @@ const activateBtn = document.getElementById("activateBtn");
 const activationKeyInput = document.getElementById("activationKey");
 const activationMessage = document.getElementById("activationMessage");
 
-// Progressive collection state (Shopee only)
+// Progressive collection state
 let lastShopeeProductData = null;
+let lastLazadaProductData = null;
 let progressiveState = "idle"; // "idle" | "scanning" | "stopped"
 
 function showActivationMessage(text, isError = true) {
@@ -26,14 +79,54 @@ chrome.storage.local.get(["accessToken"], ({ accessToken }) => {
   if (accessToken) {
     activationSection.style.display = "none";
     scanSection.style.display = "block";
-    
-    // Check for automatic scan results on popup open - ONLY PRODUCT SCANS
+    refreshPageStatus();
     checkForAutoScanResults();
   } else {
     activationSection.style.display = "block";
     scanSection.style.display = "none";
   }
 });
+
+// -----------------------------------------------------------------------
+// Page status banner: tells the user whether the current tab is a
+// supported shopping platform and whether full product scan is available.
+// -----------------------------------------------------------------------
+function refreshPageStatus() {
+  const banner = document.getElementById("pageStatus");
+  if (!banner) return;
+
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const url = tabs[0]?.url || "";
+    const platform = detectPlatform(url);
+
+    if (!platform) {
+      banner.className = "page-status page-status--unsupported";
+      banner.innerHTML = `<i class="fas fa-info-circle"></i><span>Not a supported shopping site. Visit one of the platforms below to scan.</span>`;
+      scanBtn && (scanBtn.disabled = true);
+      commentsBtn && (commentsBtn.disabled = true);
+      return;
+    }
+
+    if (platform.fullScan) {
+      if (platform.isProduct) {
+        banner.className = "page-status page-status--supported";
+        banner.innerHTML = `<i class="fas fa-check-circle"></i><span><strong>${platform.label}</strong> product detected — ready to scan</span>`;
+        scanBtn && (scanBtn.disabled = false);
+        commentsBtn && (commentsBtn.disabled = false);
+      } else {
+        banner.className = "page-status page-status--neutral";
+        banner.innerHTML = `<i class="fas fa-search"></i><span>${platform.label} detected — open a product page to scan</span>`;
+        scanBtn && (scanBtn.disabled = true);
+        commentsBtn && (commentsBtn.disabled = true);
+      }
+    } else {
+      banner.className = "page-status page-status--supported";
+      banner.innerHTML = `<i class="fas fa-globe"></i><span>${platform.label} — URL safety check active</span>`;
+      scanBtn && (scanBtn.disabled = true);
+      commentsBtn && (commentsBtn.disabled = true);
+    }
+  });
+}
 
 function checkForAutoScanResults() {
   // Check if there are recent auto-scan results to display - ONLY PRODUCT SCANS
@@ -66,12 +159,40 @@ function isRecentResult(timestamp) {
   return (now - timestamp) < fiveMinutes;
 }
 
+// Submit activation on Enter
+const activationKeyInputEl = document.getElementById("activationKey");
+if (activationKeyInputEl) {
+  activationKeyInputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      document.getElementById("activateBtn")?.click();
+    }
+  });
+}
+
+// Re-detect supported page when the active tab changes or its URL updates
+chrome.tabs.onActivated.addListener(() => refreshPageStatus());
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
+  if (changeInfo.url || changeInfo.status === "complete") refreshPageStatus();
+});
+
 // Handle activation (ONE TIME) - Updated with better error handling
 activateBtn.addEventListener("click", async () => {
   console.log("Activate clicked");
   const key = activationKeyInput.value.trim();
   if (!key) {
     showActivationMessage("Please enter an activation key.");
+    activationKeyInput.focus();
+    return;
+  }
+  if (key.length < 8) {
+    showActivationMessage("Activation key looks too short. Please double-check.");
+    activationKeyInput.focus();
+    return;
+  }
+  if (!/^[A-Za-z0-9_\-]+$/.test(key)) {
+    showActivationMessage("Activation key contains invalid characters.");
+    activationKeyInput.focus();
     return;
   }
   activationMessage.className = "";
@@ -214,7 +335,7 @@ function showRiskAssessment(riskScore, riskLevel, description) {
 function performScan(isAutomatic = false, withReviews = false) {
   chrome.storage.local.get("accessToken", ({ accessToken }) => {
     if (!accessToken) {
-      output.textContent = "❌ Extension not activated. Please enter your activation key.";
+      showToast("Extension not activated. Enter your activation key first.", "error");
       return;
     }
 
@@ -229,7 +350,8 @@ function performScan(isAutomatic = false, withReviews = false) {
     // Get current tab
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (!tabs[0]) {
-        output.textContent = "❌ Unable to access current tab.";
+        showToast("Unable to access current tab.", "error");
+        output.textContent = "";
         resetButton();
         return;
       }
@@ -237,16 +359,15 @@ function performScan(isAutomatic = false, withReviews = false) {
       const currentTab = tabs[0];
       console.log("Current tab URL:", currentTab.url);
 
-      // Detect platform
-      const isShopee = currentTab.url.includes("shopee.ph") && /-i\.\d+\.\d+/.test(currentTab.url);
-      const isLazada = currentTab.url.includes("lazada.com.ph") &&
-                       currentTab.url.includes("/products/") &&
-                       /-i\d+-s\d+\.html/.test(currentTab.url);
-      const isFacebook = currentTab.url.includes("facebook.com") &&
-                         /\/marketplace\/item\/\d+/.test(currentTab.url);
+      // Detect platform via the central registry
+      const platform = detectPlatform(currentTab.url);
+      const isShopee = platform?.key === "shopee" && platform.isProduct;
+      const isLazada = platform?.key === "lazada" && platform.isProduct;
+      const isFacebook = platform?.key === "facebook" && platform.isProduct;
 
       if (!isShopee && !isLazada && !isFacebook) {
-        output.textContent = "❌ Navigate to a Shopee product page, Lazada product page, or Facebook Marketplace listing to scan.";
+        showToast("Open a Shopee, Lazada, or FB Marketplace product page to scan.", "warning", 4500);
+        output.textContent = "";
         resetButton();
         return;
       }
@@ -288,13 +409,15 @@ function performScan(isAutomatic = false, withReviews = false) {
       // Send message to content script to extract data
       const response = await sendExtractData();
       if (!response) {
-        output.textContent = "❌ Unable to scan this page. Please refresh the page and try again.";
+        showToast("Unable to scan this page. Please refresh and try again.", "error");
+        output.textContent = "";
         resetButton();
         return;
       }
 
       if (!response.success) {
-        output.textContent = "❌ Failed to extract product data. Please try again.";
+        showToast("Failed to extract product data. Please try again.", "error");
+        output.textContent = "";
         resetButton();
         return;
       }
@@ -338,6 +461,7 @@ function performScan(isAutomatic = false, withReviews = false) {
 
         // Cache for progressive restart
         if (currentTab.url.includes("shopee.ph")) lastShopeeProductData = productData;
+        if (currentTab.url.includes("lazada.com.ph")) lastLazadaProductData = productData;
 
         console.log("Product data to send to scan.php:", productData);
 
@@ -410,27 +534,42 @@ function performScan(isAutomatic = false, withReviews = false) {
                   }, 400);
                 }
               );
-            } else if (isLazada || isFacebook) {
-              const delay = isLazada ? 600 : 0;
-              setTimeout(() => {
-                chrome.tabs.sendMessage(currentTab.id, { type: "EXTRACT_REVIEWS" }, (reviewResponse) => {
-                  appendReviewsToOutput(reviewResponse?.reviews || [], isLazada);
-                });
-              }, delay);
+            } else if (isLazada) {
+              // Progressive collection for Lazada — same pattern as Shopee
+              chrome.tabs.sendMessage(
+                currentTab.id,
+                { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
+                () => {
+                  setCommentsButtonState("scanning");
+                  setTimeout(() => {
+                    chrome.tabs.sendMessage(
+                      currentTab.id,
+                      { type: "GET_PROGRESSIVE_REVIEWS" },
+                      (r) => appendReviewsToOutput(r?.reviews || [], true)
+                    );
+                  }, 600);
+                }
+              );
+            } else if (isFacebook) {
+              chrome.tabs.sendMessage(currentTab.id, { type: "EXTRACT_REVIEWS" }, (reviewResponse) => {
+                appendReviewsToOutput(reviewResponse?.reviews || [], false);
+              });
             }
           }
         } else {
-          output.textContent = "❌ Invalid response from server. Please try again.";
+          showToast("Invalid response from server. Please try again.", "error");
+          output.textContent = "";
         }
       } catch (error) {
         console.error("Scan failed:", error);
         if (error instanceof TypeError && error.message === "Failed to fetch") {
-          output.textContent = "❌ Cannot reach the server. Please make sure the local server is running at " + SURESHOP_API_BASE + " and try again.";
+          showToast("Cannot reach the SureShop server. Check your connection.", "error", 5000);
         } else if (error.message && error.message.startsWith("Server error:")) {
-          output.textContent = `❌ ${error.message}. Please try again later.`;
+          showToast(`${error.message}. Please try again later.`, "error", 5000);
         } else {
-          output.textContent = `❌ Scan failed: ${error.message}`;
+          showToast(`Scan failed: ${error.message}`, "error", 5000);
         }
+        output.textContent = "";
       } finally {
         resetButton();
       }
@@ -462,6 +601,28 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_RESTARTED") {
+    setCommentsButtonState("scanning");
+  }
+
+  if (message.type === "LAZADA_SCAN_UPDATED") {
+    console.log("[Popup] Lazada progressive update:", message.risk_score, message.risk_level);
+    showRiskAssessment(message.risk_score, message.risk_level, lastLazadaProductData?.description || null);
+    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
+      appendReviewsToOutput(message.reviews, true);
+    }
+  }
+
+  if (message.type === "LAZADA_PROGRESSIVE_STOPPED") {
+    setCommentsButtonState("stopped");
+    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
+      appendReviewsToOutput(message.reviews, true);
+    }
+    if (message.risk_score !== undefined && message.risk_level) {
+      showRiskAssessment(message.risk_score, message.risk_level, lastLazadaProductData?.description || null);
+    }
+  }
+
+  if (message.type === "LAZADA_PROGRESSIVE_RESTARTED") {
     setCommentsButtonState("scanning");
   }
 });
@@ -507,7 +668,10 @@ commentsBtn.addEventListener("click", () => {
     // User restarts collection with the same product data
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: "SHOPEE_RESTART_COLLECTION" });
+        const restartType = tabs[0].url.includes("lazada.com.ph")
+          ? "LAZADA_RESTART_COLLECTION"
+          : "SHOPEE_RESTART_COLLECTION";
+        chrome.tabs.sendMessage(tabs[0].id, { type: restartType });
       }
     });
     return;

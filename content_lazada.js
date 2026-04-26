@@ -6,6 +6,11 @@
 
   console.log("ScamGuard content_lazada.js loaded (Lazada)");
 
+  // ===============================
+  // API Base (mirrors popup.js)
+  // ===============================
+  const SURESHOP_API_BASE = "http://localhost/php/sureshopwebsite/app/controller";
+
   // Lazada product page detection:
   // e.g. https://www.lazada.com.ph/products/name-i123456-s654321.html
   function isProductPage() {
@@ -909,11 +914,32 @@
   let latestData = null;
   let dataStale = true;
 
+  // ===============================
+  // Progressive Review Collection State
+  // ===============================
+  let progressiveReviews = [];      // all reviews harvested across pages
+  let seenReviewKeys = new Set();   // dedup by username|date|text-prefix
+  let reviewMutationObserver = null;
+  let progressiveActive = false;
+  let progressiveScanData = null;   // product data payload used for resends
+  let progressiveDebounceTimer = null;
+  let lastKnownReviewCount = 0;     // count of review containers seen in DOM
+  let lastProgressiveScore = null;  // most recent score returned by backend
+  let lastProgressiveLevel = null;  // most recent level returned by backend
+
   setInterval(() => {
     if (location.href !== lastUrl) {
       console.log("Lazada URL changed (SPA):", lastUrl, "→", location.href);
       lastUrl = location.href;
       dataStale = true;
+      // Reset progressive collection — new product page, fresh slate (no stopped card)
+      stopProgressiveCollection(false);
+      progressiveReviews = [];
+      seenReviewKeys = new Set();
+      progressiveScanData = null;
+      lastKnownReviewCount = 0;
+      lastProgressiveScore = null;
+      lastProgressiveLevel = null;
       checkAndShowCard();
 
       chrome.runtime.sendMessage({
@@ -921,6 +947,245 @@
       });
     }
   }, 500);
+
+  // ===============================
+  // Progressive Review Collection
+  // ===============================
+
+  /** Stable key for deduplication */
+  function makeReviewKey(r) {
+    return `${r.username || ""}|${r.date || ""}|${(r.text || "").slice(0, 60)}`;
+  }
+
+  /**
+   * Scan all currently visible review containers and return only the
+   * ones not yet in seenReviewKeys (updates the set as a side-effect).
+   */
+  function harvestNewReviews() {
+    // Reuse the full battle-tested extractor, then deduplicate against already-seen reviews
+    const extracted = extractLazadaReviews(50);
+    const allReviews = extracted.value || [];
+    const newReviews = [];
+    for (const review of allReviews) {
+      const key = makeReviewKey(review);
+      if (!seenReviewKeys.has(key)) {
+        seenReviewKeys.add(key);
+        newReviews.push(review);
+      }
+    }
+    return newReviews;
+  }
+
+  /** Ensure the scan card is visible, recreating it if dismissed */
+  function ensureScanCard() {
+    if (!document.getElementById("sureshopph-lazada-scan-card")) showScanCard();
+  }
+
+  /** Notify the side panel that progressive collection stopped */
+  function notifyPopupStopped() {
+    chrome.runtime.sendMessage({
+      type: "LAZADA_PROGRESSIVE_STOPPED",
+      reviews: progressiveReviews,
+      risk_score: lastProgressiveScore,
+      risk_level: lastProgressiveLevel
+    }).catch(() => {});
+  }
+
+  /** Notify the side panel that progressive collection (re)started */
+  function notifyPopupRestarted() {
+    chrome.runtime.sendMessage({ type: "LAZADA_PROGRESSIVE_RESTARTED" }).catch(() => {});
+  }
+
+  /**
+   * Update the overlay to "actively scanning" state.
+   * score/level may be null on the first call before any backend response.
+   */
+  function setCardScanningState(score, level, reviewCount) {
+    ensureScanCard();
+    const card = document.getElementById("sureshopph-lazada-scan-card");
+    if (!card) return;
+
+    // Cancel the auto-dismiss started by showScanCard
+    card._noAutoDismiss = true;
+
+    const colorMap = { Low: "#1b9c85", Medium: "#e67e22", High: "#e74c3c" };
+    const color = (score !== null && level) ? (colorMap[level] || "#677483") : "#1b9c85";
+    const scoreHtml = (score !== null && level)
+      ? `<div style="font-size:11px;color:${color};font-weight:600;">${level} Risk · ${score}/100</div>`
+      : "";
+
+    card.querySelector(".body").innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;color:#1b9c85;text-transform:uppercase;
+                    letter-spacing:.5px;background:rgba(27,156,133,.12);border:1px solid rgba(27,156,133,.25);
+                    border-radius:.4rem;padding:5px 10px;display:inline-flex;align-items:center;gap:5px;">
+          <i class="fas fa-circle-notch fa-spin"></i> Scanning Comments...
+        </div>
+        <div style="font-size:11px;color:#677483;">${reviewCount} review${reviewCount !== 1 ? "s" : ""} collected</div>
+        ${scoreHtml}
+        <button id="sureshop-stop-btn"
+          style="margin-top:4px;padding:6px 16px;border:none;border-radius:.5rem;
+                 background:#e74c3c;color:#fff;font-size:11px;font-weight:700;
+                 cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;">
+          <i class="fas fa-stop"></i> Stop
+        </button>
+      </div>`;
+
+    card.querySelector("#sureshop-stop-btn").onclick = () => {
+      stopProgressiveCollection(true);
+    };
+  }
+
+  /**
+   * Update the overlay to "stopped / final score" state.
+   */
+  function setCardStoppedState(score, level, reviewCount) {
+    ensureScanCard();
+    const card = document.getElementById("sureshopph-lazada-scan-card");
+    if (!card) return;
+
+    const colorMap = { Low: "#1b9c85", Medium: "#e67e22", High: "#e74c3c" };
+    const color = (level && colorMap[level]) || "#677483";
+    const scoreLabel = (score !== null && level)
+      ? `${level.toUpperCase()} RISK · ${score}/100`
+      : "Score pending";
+
+    card.querySelector(".body").innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;">
+        <div style="font-size:10px;font-weight:700;color:${color};text-transform:uppercase;
+                    letter-spacing:.5px;background:${color}1a;border:1px solid ${color}40;
+                    border-radius:.4rem;padding:5px 10px;display:inline-flex;align-items:center;gap:5px;">
+          <i class="fas fa-lock"></i> Final Score
+        </div>
+        <div style="font-size:13px;font-weight:700;color:${color};">${scoreLabel}</div>
+        <div style="font-size:11px;color:#677483;">Based on ${reviewCount} review${reviewCount !== 1 ? "s" : ""}</div>
+        <button id="sureshop-restart-btn"
+          style="margin-top:4px;padding:6px 16px;border:none;border-radius:.5rem;
+                 background:#1b9c85;color:#fff;font-size:11px;font-weight:700;
+                 cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;">
+          <i class="fas fa-redo"></i> Restart Scan
+        </button>
+      </div>`;
+
+    card.querySelector("#sureshop-restart-btn").onclick = () => {
+      if (progressiveScanData) {
+        startProgressiveCollection(progressiveScanData);
+        notifyPopupRestarted();
+      }
+    };
+  }
+
+  /** Re-call backend with full accumulated review list and update UI */
+  async function sendProgressiveUpdate() {
+    if (!progressiveScanData) return;
+
+    const { accessToken } = await chrome.storage.local.get("accessToken");
+    if (!accessToken) return;
+
+    try {
+      const payload = { ...progressiveScanData, reviews: progressiveReviews };
+      const res = await fetch(`${SURESHOP_API_BASE}/scan.php`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) return;
+
+      const result = await res.json();
+      if (result.risk_score === undefined) return;
+
+      // Store latest score/level and update the on-page overlay
+      lastProgressiveScore = result.risk_score;
+      lastProgressiveLevel = result.risk_level;
+      setCardScanningState(result.risk_score, result.risk_level, progressiveReviews.length);
+
+      // Persist for popup
+      await chrome.storage.local.set({
+        lastAutoScanResult: {
+          type: "product",
+          risk_score: result.risk_score,
+          risk_level: result.risk_level,
+          description: progressiveScanData.description || null,
+          timestamp: Date.now(),
+          url: location.href
+        }
+      });
+
+      // Notify popup if it is currently open
+      chrome.runtime.sendMessage({
+        type: "LAZADA_SCAN_UPDATED",
+        risk_score: result.risk_score,
+        risk_level: result.risk_level,
+        reviews: progressiveReviews
+      }).catch(() => { /* popup may not be open */ });
+
+    } catch (e) {
+      console.warn("[SureShop] Progressive scan update failed:", e.message);
+    }
+  }
+
+  /** Debounced MutationObserver callback — fires on any DOM change while collecting */
+  function onReviewDomChange() {
+    if (!progressiveActive) return;
+    clearTimeout(progressiveDebounceTimer);
+    progressiveDebounceTimer = setTimeout(() => {
+      const newOnes = harvestNewReviews();
+      if (newOnes.length > 0) {
+        progressiveReviews.push(...newOnes);
+        console.log(
+          `[SureShop] Progressive: +${newOnes.length} reviews (total: ${progressiveReviews.length})`
+        );
+        sendProgressiveUpdate();
+      }
+    }, 800);
+  }
+
+  /** Start watching for new review pages the user navigates to */
+  function startProgressiveCollection(scanData) {
+    stopProgressiveCollection(false); // silent cleanup of any previous session
+
+    progressiveReviews = [];
+    seenReviewKeys = new Set();
+    lastKnownReviewCount = 0;
+    lastProgressiveScore = null;
+    lastProgressiveLevel = null;
+    progressiveScanData = scanData;
+    progressiveActive = true;
+
+    // Harvest reviews already visible on the current page
+    const initial = harvestNewReviews();
+    progressiveReviews.push(...initial);
+    console.log(`[SureShop] Progressive collection started. Initial reviews: ${progressiveReviews.length}`);
+
+    // Always observe body — pagination controls live outside the ratings section
+    reviewMutationObserver = new MutationObserver(onReviewDomChange);
+    reviewMutationObserver.observe(document.body, { childList: true, subtree: true });
+
+    // Show "Scanning Comments..." state on the overlay immediately
+    setCardScanningState(null, null, progressiveReviews.length);
+  }
+
+  /**
+   * Stop the MutationObserver.
+   * showCard=true (default): update overlay to final/stopped state and notify popup.
+   * showCard=false: silent stop used for SPA navigation and internal resets.
+   */
+  function stopProgressiveCollection(showCard = true) {
+    const wasActive = progressiveActive;
+    progressiveActive = false;
+    if (reviewMutationObserver) {
+      reviewMutationObserver.disconnect();
+      reviewMutationObserver = null;
+    }
+    clearTimeout(progressiveDebounceTimer);
+    if (showCard && wasActive) {
+      setCardStoppedState(lastProgressiveScore, lastProgressiveLevel, progressiveReviews.length);
+      notifyPopupStopped();
+    }
+  }
 
   // ===============================
   // Message Handler
@@ -956,6 +1221,36 @@
       return true;
     }
 
+    // ------------------------------------------------------------------
+    // Progressive review collection handlers
+    // ------------------------------------------------------------------
+    if (message.type === "START_PROGRESSIVE_COLLECTION") {
+      startProgressiveCollection(message.scanData || null);
+      sendResponse({ ok: true, initialCount: progressiveReviews.length });
+      return true;
+    }
+
+    if (message.type === "STOP_PROGRESSIVE_COLLECTION") {
+      stopProgressiveCollection(true); // user-initiated: show stopped card
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    if (message.type === "LAZADA_RESTART_COLLECTION") {
+      if (progressiveScanData) {
+        startProgressiveCollection(progressiveScanData);
+        notifyPopupRestarted();
+      }
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    if (message.type === "GET_PROGRESSIVE_REVIEWS") {
+      sendResponse({ reviews: progressiveReviews, count: progressiveReviews.length });
+      return true;
+    }
+
+    console.log("Unknown message type:", message.type);
     return false;
   });
 })();

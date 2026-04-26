@@ -4,11 +4,42 @@
 // -----------------------------------------------------------------------
 const SURESHOP_API_BASE = "http://localhost/php/sureshopwebsite/app/controller";
 
+// -----------------------------------------------------------------------
+// Supported shopping platform domains. URL auto-scan is restricted to
+// these domains. Keep in sync with manifest.json host_permissions.
+// -----------------------------------------------------------------------
+const SUPPORTED_DOMAINS = [
+  "shopee.ph",
+  "lazada.com.ph",
+  "facebook.com",        // marketplace path-checked separately
+  "tiktok.com",
+  "zalora.com.ph",
+  "carousell.ph",
+  "shein.com",
+  "temu.com",
+  "amazon.com",
+  "ebay.ph",
+  "aliexpress.com",
+  "beautymnl.com",
+  "kimstore.com",
+  "galleon.ph"
+];
+
+function isSupportedDomain(url) {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return SUPPORTED_DOMAINS.some(d => host === d || host.endsWith("." + d));
+  } catch (_) {
+    return false;
+  }
+}
+
 let currentAutoScanTab = null;
 let isInitialized = false;
 let trackedTabs = new Map(); // Track tab URL signatures (origin+pathname) for SPA detection
 let autoScanTimeout;
-let debugMode = true;
+let debugMode = false;
 
 // Cache recent URL scan results by domain to avoid redundant API calls
 const urlScanCache = new Map(); // key: hostname → { timestamp, result }
@@ -143,14 +174,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleUniversalUrlPageMessage(tab) {
   debugLog("🌍", "=== HANDLING UNIVERSAL URL PAGE ===");
   debugLog("🌍", "Tab ID:", tab.id, "URL:", tab.url);
-  
+
   // Skip internal Chrome/extension pages
-  if (tab.url && (tab.url.startsWith('chrome://') || 
-                  tab.url.startsWith('chrome-extension://') || 
+  if (tab.url && (tab.url.startsWith('chrome://') ||
+                  tab.url.startsWith('chrome-extension://') ||
                   tab.url.startsWith('moz-extension://') ||
                   tab.url.startsWith('about:') ||
                   tab.url.startsWith('file:'))) {
     debugLog("🌍", "Skipping internal page:", tab.url);
+    return;
+  }
+
+  // Restrict URL scanning to the supported shopping platform whitelist
+  if (!isSupportedDomain(tab.url)) {
+    debugLog("🌍", "Skipping non-shopping domain:", tab.url);
+    chrome.action.setBadgeText({ text: "", tabId: tab.id });
+    chrome.action.setTitle({
+      title: "SureShop — visit a supported shopping site to scan",
+      tabId: tab.id
+    });
     return;
   }
 
