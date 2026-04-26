@@ -260,7 +260,7 @@ activateBtn.addEventListener("click", async () => {
 });
 
 // Clean function to show only PRODUCT risk assessment
-function showRiskAssessment(riskScore, riskLevel, description) {
+function showRiskAssessment(riskScore, riskLevel, description, productData = null) {
   const timestamp = new Date().toLocaleString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -269,9 +269,7 @@ function showRiskAssessment(riskScore, riskLevel, description) {
     minute: '2-digit'
   });
   
-  // Determine risk message for PRODUCTS
   let riskMessage;
-  
   if (riskLevel === 'High') {
     riskMessage = 'This product appears risky. Exercise extreme caution and consider avoiding this purchase.';
   } else if (riskLevel === 'Medium') {
@@ -280,23 +278,63 @@ function showRiskAssessment(riskScore, riskLevel, description) {
     riskMessage = 'This product appears to be relatively safe based on current analysis.';
   }
 
-  const descriptionHTML = description
-    ? `<div class="product-description-block">
-        <div class="product-description-label"><i class="fas fa-align-left"></i> Product Description</div>
-        <div class="product-description-text">${description.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+  // Build the 5 key data rows (Platform → Product → Price → Seller → Rating)
+  let dataRowsHTML = '';
+  if (productData) {
+    const esc = v => String(v).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const row = (icon, label, value) => {
+      if (value === null || value === undefined || value === '') return '';
+      return `<div class="cdata-row">
+        <span class="cdata-label"><i class="fas ${icon}"></i> ${label}</span>
+        <span class="cdata-value">${esc(value)}</span>
+      </div>`;
+    };
+    const platformIcons = { shopee: 'fa-store', lazada: 'fa-tag', facebook: 'fa-facebook' };
+    const platformIcon = platformIcons[(productData.platform || '').toLowerCase()] || 'fa-store';
+    dataRowsHTML = [
+      row(platformIcon,       'Platform', productData.platform),
+      row('fa-box-open',      'Product',  productData.product_name),
+      row('fa-tag',           'Price',    productData.price !== null && productData.price !== undefined ? `₱${Number(productData.price).toLocaleString()}` : null),
+      row('fa-user-tie',      'Seller',   productData.seller_name),
+      row('fa-star',          'Rating',   productData.rating !== null && productData.rating !== undefined ? `${productData.rating} / 5 (${productData.rating_count || 0} reviews)` : null),
+    ].filter(Boolean).join('');
+  }
+
+  // Product description sub-block (inside the toggle panel)
+  const descInPanelHTML = description
+    ? `<div class="cdata-desc-block">
+        <div class="cdata-desc-label"><i class="fas fa-align-left"></i> Product Description</div>
+        <div class="cdata-desc-text">${description.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
       </div>`
     : '';
 
-  // Clear the output completely and create clean HTML
-  // Preserve the live-reviews section if one exists (progressive collection)
+  // Comments placeholder — actual reviews appended by appendReviewsToOutput
+  const commentsPlaceholderHTML = `<div class="cdata-comments-placeholder" id="cdata-comments-slot">
+    <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments</div>
+    <div class="cdata-comments-hint">Run <strong>Deep Scan</strong> to collect comments.</div>
+  </div>`;
+
+  const panelBodyHTML = dataRowsHTML + descInPanelHTML + commentsPlaceholderHTML;
+
+  const collectedDataHTML = `<div class="cdata-section">
+      <div class="cdata-header">
+        <span class="cdata-header-label"><i class="fas fa-database"></i> View Collected Data</span>
+        <label class="cdata-toggle-switch">
+          <input type="checkbox" class="cdata-toggle-input">
+          <span class="cdata-toggle-track"><span class="cdata-toggle-thumb"></span></span>
+        </label>
+      </div>
+      <div id="cdata-body-panel" class="cdata-body cdata-body--hidden">${panelBodyHTML}</div>
+    </div>`;
+
+  // Preserve live-reviews section across risk-card re-renders
   const existingReviews = document.getElementById("sureshop-reviews-output");
   output.innerHTML = '';
-  output.style.padding = '20px';
+  output.style.padding = '10px 12px';
   output.style.textAlign = 'center';
   output.style.fontFamily = 'Poppins, sans-serif';
   
   const container = document.createElement('div');
-
   container.innerHTML = `
     <div class="result-card">
       <div class="scan-status-badge">
@@ -317,7 +355,12 @@ function showRiskAssessment(riskScore, riskLevel, description) {
         ${riskMessage}
       </div>
 
-      ${descriptionHTML}
+      <div class="scan-summary-section" id="scanSummary">
+        <div class="scan-summary-header"><i class="fas fa-clipboard-list"></i> Scan Summary</div>
+        <div class="scan-summary-body"></div>
+      </div>
+
+      ${collectedDataHTML}
 
       <div class="scan-time">
         Scanned: ${timestamp}
@@ -327,8 +370,27 @@ function showRiskAssessment(riskScore, riskLevel, description) {
   
   output.appendChild(container);
 
+  // Wire up the toggle AFTER it's in the DOM (MV3 CSP blocks inline handlers)
+  const toggleInput = container.querySelector('.cdata-toggle-input');
+  const cdataBody = container.querySelector('#cdata-body-panel');
+  if (toggleInput && cdataBody) {
+    toggleInput.addEventListener('change', () => {
+      if (toggleInput.checked) {
+        cdataBody.classList.remove('cdata-body--hidden');
+        cdataBody.classList.add('cdata-body--open');
+      } else {
+        cdataBody.classList.remove('cdata-body--open');
+        cdataBody.classList.add('cdata-body--hidden');
+      }
+    });
+  }
+
   // Re-attach the live-reviews section so it survives risk-card re-renders
-  if (existingReviews) output.appendChild(existingReviews);
+  if (existingReviews) {
+    const slot = container.querySelector('#cdata-comments-slot');
+    if (slot) slot.replaceWith(existingReviews);
+    else output.appendChild(existingReviews);
+  }
 }
 
 // Enhanced manual scan function - PRODUCTS ONLY
@@ -338,6 +400,9 @@ function performScan(isAutomatic = false, withReviews = false) {
       showToast("Extension not activated. Enter your activation key first.", "error");
       return;
     }
+
+    // Clear all previous results before starting a new scan
+    output.innerHTML = '';
 
     scanBtn.innerHTML = isAutomatic ? '<i class="fas fa-sync spinning"></i> Auto-scanning...' : '<i class="fas fa-sync spinning"></i> Normal scanning...';
     if (withReviews) {
@@ -503,7 +568,7 @@ function performScan(isAutomatic = false, withReviews = false) {
           await chrome.storage.local.set(storageData);
 
           // Show results
-          showRiskAssessment(result.risk_score, result.risk_level, response.description || null);
+          showRiskAssessment(result.risk_score, result.risk_level, response.description || null, productData);
 
           // Deep Scan: append reviews after risk card
           if (withReviews) {
@@ -584,7 +649,7 @@ function performScan(isAutomatic = false, withReviews = false) {
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "SHOPEE_SCAN_UPDATED") {
     console.log("[Popup] Progressive update:", message.risk_score, message.risk_level);
-    showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null);
+    showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null, lastShopeeProductData);
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, false);
     }
@@ -596,7 +661,7 @@ chrome.runtime.onMessage.addListener((message) => {
       appendReviewsToOutput(message.reviews, false);
     }
     if (message.risk_score !== undefined && message.risk_level) {
-      showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null);
+      showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null, lastShopeeProductData);
     }
   }
 
@@ -604,9 +669,17 @@ chrome.runtime.onMessage.addListener((message) => {
     setCommentsButtonState("scanning");
   }
 
+  // Direct reviews from content script — no backend roundtrip, shows them immediately
+  if (message.type === "LAZADA_REVIEWS_DIRECT") {
+    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
+      appendReviewsToOutput(message.reviews, true);
+    }
+    return;
+  }
+
   if (message.type === "LAZADA_SCAN_UPDATED") {
     console.log("[Popup] Lazada progressive update:", message.risk_score, message.risk_level);
-    showRiskAssessment(message.risk_score, message.risk_level, lastLazadaProductData?.description || null);
+    showRiskAssessment(message.risk_score, message.risk_level, lastLazadaProductData?.description || null, lastLazadaProductData);
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, true);
     }
@@ -618,7 +691,7 @@ chrome.runtime.onMessage.addListener((message) => {
       appendReviewsToOutput(message.reviews, true);
     }
     if (message.risk_score !== undefined && message.risk_level) {
-      showRiskAssessment(message.risk_score, message.risk_level, lastLazadaProductData?.description || null);
+      showRiskAssessment(message.risk_score, message.risk_level, lastLazadaProductData?.description || null, lastLazadaProductData);
     }
   }
 
@@ -750,17 +823,21 @@ function appendReviewsToOutput(reviews, isLazada = false) {
 
   const divider = document.createElement("div");
   divider.id = "sureshop-reviews-output";
-  divider.style.cssText = "margin-top:14px;";
+  divider.className = "cdata-comments-slot-filled";
 
   if (reviews.length === 0) {
-    const hint = isLazada
-      ? "Scroll down to the <strong>Ratings &amp; Reviews</strong> section first so it loads, then Deep Scan again."
-      : "Scroll down to the reviews section first, then scan again.";
-    divider.innerHTML = `
-      <div class="reviews-container">
-        <div class="reviews-header"><i class="fas fa-comments"></i> Comments</div>
-        <div class="no-reviews-msg">No comments found.<br>${hint}</div>
-      </div>`;
+    if (isLazada && progressiveState === "scanning") {
+      divider.innerHTML = `
+        <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments</div>
+        <div class="cdata-comments-hint"><i class="fas fa-spinner fa-spin" style="margin-right:6px;"></i>Scanning for comments&hellip;<br><small style="opacity:.7;">Scroll down to Ratings &amp; Reviews if it hasn't loaded yet.</small></div>`;
+    } else {
+      const hint = isLazada
+        ? "Scroll down to the <strong>Ratings &amp; Reviews</strong> section first so it loads, then Deep Scan again."
+        : "Scroll down to the reviews section first, then scan again.";
+      divider.innerHTML = `
+        <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments</div>
+        <div class="cdata-comments-hint">No comments found.<br>${hint}</div>`;
+    }
   } else {
     const cards = reviews.map(r => {
       const starsHtml = r.rating_stars
@@ -781,13 +858,18 @@ function appendReviewsToOutput(reviews, isLazada = false) {
     }).join("");
 
     divider.innerHTML = `
-      <div class="reviews-container">
-        <div class="reviews-header"><i class="fas fa-comments"></i> ${reviews.length} Comment${reviews.length !== 1 ? "s" : ""} Found</div>
-        ${cards}
-      </div>`;
+      <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments (${reviews.length})</div>
+      <div class="reviews-list">${cards}</div>`;
   }
 
-  // Replace existing reviews section in-place (progressive updates) or append fresh
+  // Try to place reviews inside the panel's comments slot first
+  const slot = document.getElementById("cdata-comments-slot");
+  if (slot) {
+    slot.replaceWith(divider);
+    return;
+  }
+
+  // Fallback: replace existing or append to output
   const existing = document.getElementById("sureshop-reviews-output");
   if (existing) {
     existing.replaceWith(divider);

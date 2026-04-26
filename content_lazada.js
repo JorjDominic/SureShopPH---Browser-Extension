@@ -1138,6 +1138,12 @@
         console.log(
           `[SureShop] Progressive: +${newOnes.length} reviews (total: ${progressiveReviews.length})`
         );
+        // Send reviews directly to popup immediately — no backend roundtrip needed
+        chrome.runtime.sendMessage({
+          type: "LAZADA_REVIEWS_DIRECT",
+          reviews: progressiveReviews
+        }).catch(() => {});
+        // Also update backend for revised risk score
         sendProgressiveUpdate();
       }
     }, 800);
@@ -1160,9 +1166,45 @@
     progressiveReviews.push(...initial);
     console.log(`[SureShop] Progressive collection started. Initial reviews: ${progressiveReviews.length}`);
 
+    // Scroll to the Ratings & Reviews section to trigger Lazada's lazy load
+    try {
+      const reviewHeadings = [...document.querySelectorAll('*')].filter(el =>
+        el.childElementCount === 0 &&
+        /Ratings?\s*[&and]*\s*Reviews?|Customer\s+Reviews?/i.test((el.textContent || '').trim()) &&
+        (el.textContent || '').trim().length < 80
+      );
+      const target = reviewHeadings[0] || document.querySelector(
+        '[class*="review"], [class*="rating"], [id*="review"], [id*="rating"]'
+      );
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        console.log('[SureShop] Scrolled to reviews section to trigger lazy load');
+      }
+    } catch (_) {}
+
     // Always observe body — pagination controls live outside the ratings section
     reviewMutationObserver = new MutationObserver(onReviewDomChange);
     reviewMutationObserver.observe(document.body, { childList: true, subtree: true });
+
+    // Retry harvest every 3s for the first 30s to catch lazy-loaded reviews
+    let retryCount = 0;
+    const retryInterval = setInterval(() => {
+      if (!progressiveActive || retryCount >= 10) {
+        clearInterval(retryInterval);
+        return;
+      }
+      retryCount++;
+      const found = harvestNewReviews();
+      if (found.length > 0) {
+        progressiveReviews.push(...found);
+        console.log(`[SureShop] Retry harvest: +${found.length} reviews (total: ${progressiveReviews.length})`);
+        chrome.runtime.sendMessage({
+          type: "LAZADA_REVIEWS_DIRECT",
+          reviews: progressiveReviews
+        }).catch(() => {});
+        sendProgressiveUpdate();
+      }
+    }, 3000);
 
     // Show "Scanning Comments..." state on the overlay immediately
     setCardScanningState(null, null, progressiveReviews.length);
