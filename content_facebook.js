@@ -7,7 +7,7 @@
   // Only activate on Marketplace pages
   if (!location.pathname.startsWith("/marketplace")) return;
 
-  console.log("ScamGuard content_facebook.js loaded (Facebook Marketplace)");
+  console.log("SureShop content_facebook.js loaded (Facebook Marketplace)");
 
   // Facebook Marketplace listing page detection:
   // e.g. https://www.facebook.com/marketplace/item/1234567890/
@@ -45,7 +45,8 @@
             <i class="fas fa-shield-alt"></i>
           </div>
           <div class="ready-title">Product Detected</div>
-          <div class="ready-desc">Open the SureShop extension to analyze this listing</div>
+          <div class="ready-desc">Click below or open the SureShop side panel to scan</div>
+          <button class="scan-now-btn"><i class="fas fa-shield-alt"></i> Open SureShop</button>
         </div>
       </div>
     `;
@@ -225,6 +226,28 @@
         transform: translateY(-12px) scale(0.95);
         transition: all 0.25s ease;
       }
+
+      #sureshopph-fb-scan-card .scan-now-btn {
+        background: linear-gradient(135deg, #1b9c85, #138a73);
+        color: #fff;
+        border: none;
+        border-radius: 1.2rem;
+        padding: 7px 18px;
+        font-size: 12px;
+        font-weight: 600;
+        font-family: 'Poppins', system-ui, sans-serif;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 4px;
+        box-shadow: 0 4px 12px rgba(27,156,133,0.35);
+        transition: all 0.2s ease;
+      }
+      #sureshopph-fb-scan-card .scan-now-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px rgba(27,156,133,0.45);
+      }
     `;
 
     if (!document.getElementById('sureshop-fa-css')) {
@@ -234,20 +257,33 @@
       faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css';
       document.head.appendChild(faLink);
     }
+    if (!document.getElementById('sureshop-poppins-css')) {
+      const poppinsLink = document.createElement('link');
+      poppinsLink.id = 'sureshop-poppins-css';
+      poppinsLink.rel = 'stylesheet';
+      poppinsLink.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap';
+      document.head.appendChild(poppinsLink);
+    }
     document.head.appendChild(style);
     document.body.appendChild(card);
 
-    card.querySelector(".close").onclick = () => {
+    card.querySelector(".close").addEventListener("click", () => {
       card.classList.add("dismissing");
       setTimeout(() => card.remove(), 250);
-    };
+    });
+
+    card.querySelector(".scan-now-btn").addEventListener("click", () => {
+      chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" },
+        () => { if (chrome.runtime.lastError) {} });
+    });
 
     setTimeout(() => {
-      if (document.getElementById("sureshopph-fb-scan-card")) {
-        card.classList.add("dismissing");
-        setTimeout(() => card.remove(), 250);
+      const existing = document.getElementById("sureshopph-fb-scan-card");
+      if (existing) {
+        existing.classList.add("dismissing");
+        setTimeout(() => existing.remove(), 250);
       }
-    }, 7000);
+    }, 8000);
   }
 
   // ===============================
@@ -302,27 +338,34 @@
   }
 
   function extractPrice() {
-    const priceRe = /(?:₱|PHP)\s*([\d,]+(?:\.\d{2})?)/i;
+    const priceRe = /(?:₱|PHP)\s*([\d,]+(?:\.\d{2})?)/gi;
+    // Matches ranges with OR without currency symbol: ₱400–₱1,000 / PHP400-PHP1000 / 400 - 1,000
+    const rangeRe = /(?:(?:₱|PHP)\s*)?([\d,]{1,10})\s*[-–—]\s*(?:₱|PHP)?\s*([\d,]{1,10})(?!\d)/;
 
-    // Strategy 1: og:description — set server-side before page renders.
-    // Format on FB Marketplace PH: "PHP183,000 · Used - Good · Antipolo"
+    function isRange(text) {
+      const m = text.match(rangeRe);
+      if (!m) return false;
+      const lo = parseFloat(m[1].replace(/,/g, ""));
+      const hi = parseFloat(m[2].replace(/,/g, ""));
+      // Only treat as a price range if both numbers look like money values
+      return lo >= 1 && hi > lo && hi < 100_000_000;
+    }
+
+    // Strategy 1: og:description (server-side, most reliable)
     const ogDesc = document.querySelector('meta[property="og:description"]');
     if (ogDesc) {
       const content = ogDesc.getAttribute("content") || "";
-      if (/\bfree\b/i.test(content.split("·")[0])) return { value: 0, confidence: "high" };
-      const match = content.match(priceRe);
-      if (match) {
-        const price = parseFloat(match[1].replace(/,/g, ""));
-        if (price > 0 && price < 100000000) {
-          return { value: price, confidence: "high" };
-        }
+      const firstPart = content.split("·")[0];
+      if (/\bfree\b/i.test(firstPart)) return { value: 0, confidence: "high" };
+      if (isRange(firstPart)) return { value: null, confidence: "low", variant: true };
+      const matches = [...content.matchAll(priceRe)];
+      if (matches.length > 0) {
+        const price = parseFloat(matches[0][1].replace(/,/g, ""));
+        if (price >= 1 && price < 100_000_000) return { value: price, confidence: "high" };
       }
     }
 
-    // Strategy 2: visible text walker.
-    // Use getBoundingClientRect to detect truly rendered elements.
-    // getComputedStyle misses off-screen / clipped containers; getBoundingClientRect
-    // returns width=0, height=0 for those, which we skip.
+    // Strategy 2: visible text walker
     const walker = document.createTreeWalker(
       document.body,
       NodeFilter.SHOW_TEXT,
@@ -331,9 +374,7 @@
           const el = node.parentElement;
           if (!el) return NodeFilter.FILTER_REJECT;
           const rect = el.getBoundingClientRect();
-          if (rect.width === 0 || rect.height === 0) {
-            return NodeFilter.FILTER_REJECT;
-          }
+          if (rect.width === 0 || rect.height === 0) return NodeFilter.FILTER_REJECT;
           return NodeFilter.FILTER_ACCEPT;
         }
       }
@@ -342,16 +383,12 @@
     while ((node = walker.nextNode())) {
       const text = node.textContent.trim();
       if (!text) continue;
-      if (/\bfree\b/i.test(text) && text.length < 20) {
-        return { value: 0, confidence: "high" };
-      }
-      const match = text.match(priceRe);
-      if (match) {
-        const price = parseFloat(match[1].replace(/,/g, ""));
-        // Ignore tiny amounts (< 50) which are Facebook internal UI elements
-        if (price >= 50 && price < 100000000) {
-          return { value: price, confidence: "medium" };
-        }
+      if (/\bfree\b/i.test(text) && text.length < 20) return { value: 0, confidence: "high" };
+      if (isRange(text)) return { value: null, confidence: "low", variant: true };
+      const matches = [...text.matchAll(priceRe)];
+      if (matches.length > 0) {
+        const price = parseFloat(matches[0][1].replace(/,/g, ""));
+        if (price >= 1 && price < 100_000_000) return { value: price, confidence: "medium" };
       }
     }
 
@@ -359,90 +396,76 @@
   }
 
   function extractSellerName() {
-    // Strategy 1: look for "Seller information" section specifically.
-    // FB Marketplace renders this as a labeled section near the bottom.
-    const bodyText = document.body.innerText;
-    const sellerSectionMatch = bodyText.match(/Seller\s+information[\s\S]{0,500}?\n([^\n]{2,60})\n/);
-    if (sellerSectionMatch) {
-      const candidate = cleanText(sellerSectionMatch[1]);
-      if (candidate && candidate.length > 1 && !candidate.includes("?") &&
-          !/^(seller|information|details|facebook|marketplace|message|joined|active|member)$/i.test(candidate)) {
-        return { value: candidate, confidence: "high" };
-      }
-    }
+    const isNavLabel = t => /^(marketplace|facebook marketplace|chats?|notifications?|home|watch|groups?|gaming|menu|create|friends?|messenger|see all|seller details?|seller information|listed by|more)$/i.test(t);
 
-    // Strategy 2: seller profile links — FB Marketplace uses /marketplace/profile/
+    // Strategy 1: seller profile links — DOM-first, fastest and most reliable
     const profileLinks = [...document.querySelectorAll(
       'a[href*="/marketplace/profile/"], a[href*="/user/"], a[href*="/profile.php"]'
     )];
     for (const link of profileLinks) {
       const text = cleanText(link.textContent);
-      if (
-        text &&
-        text.length > 1 &&
-        text.length < 60 &&
-        !text.includes("?") &&
-        !text.includes("!") &&
-        !/^(marketplace|facebook|chats?|notifications?|home|messenger|see all|seller details?|seller)$/i.test(text)
-      ) {
+      if (text && text.length > 1 && text.length < 60 && !isNavLabel(text) && !/[?!]/.test(text)) {
         return { value: text, confidence: "high" };
       }
     }
 
-    // Strategy 3: aria-labels with seller info
-    const sellerElements = [...document.querySelectorAll("[aria-label]")]
+    // Strategy 2: aria-label hints for "listed by" / "seller"
+    const sellerEls = [...document.querySelectorAll("[aria-label]")]
       .filter(el => /seller|listed by/i.test(el.getAttribute("aria-label") || ""));
-    for (const el of sellerElements) {
+    for (const el of sellerEls) {
       const text = cleanText(el.textContent);
-      if (text && text.length > 1 && text.length < 60 && !text.includes("?")) {
+      if (text && text.length > 1 && text.length < 60 && !isNavLabel(text) && !/[?!]/.test(text)) {
         return { value: text, confidence: "high" };
       }
     }
+
+    // Strategy 3: innerText scan — slower, last resort
+    try {
+      const bodyText = document.body.innerText;
+      const match = bodyText.match(/Seller\s+information[\s\S]{0,300}?\n([^\n]{2,60})\n/);
+      if (match) {
+        const candidate = cleanText(match[1]);
+        if (candidate && !isNavLabel(candidate) && !/[?!]/.test(candidate)) {
+          return { value: candidate, confidence: "medium" };
+        }
+      }
+    } catch (_) {}
 
     return { value: null, confidence: "low" };
   }
 
   function extractSellerProfileUrl() {
+    const isNavText = t => /^(marketplace|facebook|chats?|notifications?|home|messenger|see all|seller details?|seller)$/i.test(t);
+    // Also match username-style URLs like facebook.com/johndoe
     const profileLinks = [...document.querySelectorAll(
-      'a[href*="/marketplace/profile/"], a[href*="/user/"], a[href*="/profile.php"]'
+      'a[href*="/marketplace/profile/"], a[href*="/user/"], a[href*="/profile.php"], a[href^="https://www.facebook.com/"]'
     )];
     for (const link of profileLinks) {
       const text = cleanText(link.textContent);
       const href = link.getAttribute("href");
-      if (
-        href &&
-        text &&
-        text.length < 60 &&
-        !text.includes("?") &&
-        !/^(marketplace|facebook|chats?|notifications?|home|messenger|see all|seller details?|seller)$/i.test(text)
-      ) {
-        try {
-          const u = new URL(href.startsWith("http") ? href : `https://www.facebook.com${href}`);
+      if (!href || !text || text.length >= 60 || /[?!]/.test(text) || isNavText(text)) continue;
+      try {
+        const u = new URL(href.startsWith("http") ? href : `https://www.facebook.com${href}`);
+        // Accept only facebook.com profile paths — skip generic marketplace browse pages
+        if (u.hostname.endsWith("facebook.com") && u.pathname.length > 1 &&
+            !/^\/marketplace\/?$/.test(u.pathname)) {
           return { value: `${u.origin}${u.pathname}`, confidence: "high" };
-        } catch (e) {
-          return { value: href.startsWith("http") ? href : `https://www.facebook.com${href}`, confidence: "high" };
         }
-      }
+      } catch (_) {}
     }
     return { value: null, confidence: "low" };
   }
 
   function extractCondition() {
     const bodyText = document.body.innerText;
-    // Possible condition values on FB Marketplace
+    // Normalize em/en dashes to hyphens before matching
+    const normalized = bodyText.replace(/[\u2013\u2014]/g, "-");
     const conditions = ["New", "Used - Like New", "Used - Good", "Used - Fair", "For parts or not working"];
     for (const condition of conditions) {
-      if (bodyText.includes(condition)) {
-        return { value: condition, confidence: "high" };
-      }
+      if (normalized.includes(condition)) return { value: condition, confidence: "high" };
     }
-
-    // Fallback pattern
-    const match = bodyText.match(/Condition[:\s]+([^\n]{2,40})/i);
-    if (match) {
-      return { value: cleanText(match[1]), confidence: "medium" };
-    }
-
+    const match = normalized.match(/Condition[:\s]+([^\n]{2,40})/i);
+    if (match) return { value: cleanText(match[1]), confidence: "medium" };
     return { value: null, confidence: "low" };
   }
 
@@ -473,6 +496,19 @@
     return match
       ? { value: cleanText(match[1]), confidence: "high" }
       : { value: null, confidence: "low" };
+  }
+
+  function extractImageCount() {
+    // Count large Facebook CDN images as product photos
+    const productImgs = [...document.querySelectorAll('img[src*="scontent"]')]
+      .filter(img => {
+        const rect = img.getBoundingClientRect();
+        return rect.width >= 100 && rect.height >= 100;
+      });
+    if (productImgs.length > 0) return { value: productImgs.length, confidence: "medium" };
+    // Fallback: at least 1 if og:image is set
+    if (document.querySelector('meta[property="og:image"]')) return { value: 1, confidence: "low" };
+    return { value: null, confidence: "low" };
   }
 
   function extractDescription() {
@@ -634,35 +670,102 @@
   // ===============================
   function extractFacebookData() {
     console.log("Extracting Facebook Marketplace data...");
+    try {
+      const productName = extractProductName();
+      const price = extractPrice();
+      const sellerName = extractSellerName();
+      const profileUrl = extractSellerProfileUrl();
+      const condition = extractCondition();
+      const locationInfo = extractLocation();
+      const listingDate = extractListingDate();
+      const description = extractDescription();
+      const imageCount = extractImageCount();
 
-    const productName = extractProductName();
-    const price = extractPrice();
-    const sellerName = extractSellerName();
-    const profileUrl = extractSellerProfileUrl();
-    const condition = extractCondition();
-    const locationInfo = extractLocation();
-    const listingDate = extractListingDate();
-    const description = extractDescription();
+      return {
+        success: true,
+        platform: "facebook",
+        product_name: productName.value,
+        price: price.value,
+        price_is_variant: price.variant || false,
+        seller_name: sellerName.value,
+        profile_url: profileUrl.value,
+        condition: condition.value,
+        location: locationInfo.value,
+        listing_date: listingDate.value,
+        description: description.value,
+        image_count: imageCount.value,
+        // Explicit nulls — scan.php skips scoring checks that don't apply to FB
+        sold_count: null,
+        rating: null,
+        rating_count: null,
+        seller_rating: null,
+        response_rate: null,
+        listing_url: window.location.href,
+        extracted_at: new Date().toISOString()
+      };
+    } catch (err) {
+      console.error("extractFacebookData error:", err);
+      return { success: false, error: err.message };
+    }
+  }
 
-    return {
-      success: true,
-      platform: "facebook",
-      product_name: productName.value,
-      price: price.value,
-      seller_name: sellerName.value,
-      profile_url: profileUrl.value,
-      condition: condition.value,
-      location: locationInfo.value,
-      listing_date: listingDate.value,
-      description: description.value,
-      listing_url: window.location.href,
-      extracted_at: new Date().toISOString()
-    };
+  // ===============================
+  // Progressive Comment Collection
+  // ===============================
+  let fbProgressiveState = "idle"; // "idle" | "scanning" | "stopped"
+  let fbCollectedComments = [];
+  let fbProgressiveIntervalId = null;
+  let fbProgressiveAttempts = 0;
+  const FB_MAX_ATTEMPTS = 10;
+  const FB_RETRY_MS = 3000;
+
+  function startFacebookProgressiveCollection() {
+    if (fbProgressiveState === "scanning") return;
+    fbProgressiveState = "scanning";
+    fbCollectedComments = [];
+    fbProgressiveAttempts = 0;
+
+    // Scroll toward the comments section to trigger lazy loading
+    window.scrollTo({ top: document.body.scrollHeight * 0.6, behavior: "smooth" });
+
+    // Immediately tell popup we're scanning (shows spinner)
+    chrome.runtime.sendMessage({ type: "FACEBOOK_REVIEWS_DIRECT", reviews: [] },
+      () => { if (chrome.runtime.lastError) {} });
+
+    fbProgressiveIntervalId = setInterval(() => {
+      fbProgressiveAttempts++;
+      try {
+        const result = extractFacebookComments(20);
+        if (result.value.length > fbCollectedComments.length) {
+          fbCollectedComments = result.value;
+          chrome.runtime.sendMessage(
+            { type: "FACEBOOK_REVIEWS_DIRECT", reviews: fbCollectedComments },
+            () => { if (chrome.runtime.lastError) {} }
+          );
+        }
+      } catch (_) {}
+      if (fbProgressiveAttempts >= FB_MAX_ATTEMPTS) stopFacebookProgressiveCollection();
+    }, FB_RETRY_MS);
+  }
+
+  function stopFacebookProgressiveCollection() {
+    if (fbProgressiveIntervalId) {
+      clearInterval(fbProgressiveIntervalId);
+      fbProgressiveIntervalId = null;
+    }
+    fbProgressiveState = "stopped";
+    chrome.runtime.sendMessage(
+      { type: "FACEBOOK_PROGRESSIVE_STOPPED", reviews: fbCollectedComments },
+      () => { if (chrome.runtime.lastError) {} }
+    );
   }
 
   // ===============================
   // Page Detection & Messaging
   // ===============================
+  let latestData = null;
+  let dataStale = true;
+
   function checkAndShowCard() {
     if (isListingPage()) {
       console.log("Facebook Marketplace listing detected, showing scan card");
@@ -670,33 +773,50 @@
     }
   }
 
+  // Eagerly extract so GET_CURRENT_DATA works immediately on popup open
+  if (isListingPage()) {
+    try { latestData = extractFacebookData(); dataStale = false; } catch (_) {}
+  }
+
   checkAndShowCard();
 
-  chrome.runtime.sendMessage({
-    type: isListingPage() ? "FACEBOOK_MARKETPLACE_PAGE" : "FACEBOOK_NOT_MARKETPLACE_PAGE"
-  });
+  chrome.runtime.sendMessage(
+    { type: isListingPage() ? "FACEBOOK_MARKETPLACE_PAGE" : "FACEBOOK_NOT_MARKETPLACE_PAGE" },
+    () => { if (chrome.runtime.lastError) {} }
+  );
 
   // ===============================
   // SPA Navigation Detection
   // ===============================
   let lastUrl = location.href;
-  let latestData = null;
-  let dataStale = true;
 
   setInterval(() => {
-    if (location.href !== lastUrl) {
-      console.log("Facebook URL changed (SPA):", lastUrl, "→", location.href);
-      lastUrl = location.href;
-      dataStale = true;
+    if (location.href === lastUrl) return;
+    console.log("Facebook URL changed (SPA):", lastUrl, "→", location.href);
+    lastUrl = location.href;
+    dataStale = true;
 
-      // Only activate within marketplace section
-      if (!location.pathname.startsWith("/marketplace")) return;
+    // Stop any in-progress collection on navigation
+    if (fbProgressiveState === "scanning") stopFacebookProgressiveCollection();
 
-      checkAndShowCard();
-      chrome.runtime.sendMessage({
-        type: isListingPage() ? "FACEBOOK_MARKETPLACE_PAGE" : "FACEBOOK_NOT_MARKETPLACE_PAGE"
-      });
+    // Remove scan card if we've left a listing page
+    if (!isListingPage()) {
+      const existing = document.getElementById("sureshopph-fb-scan-card");
+      if (existing) { existing.classList.add("dismissing"); setTimeout(() => existing.remove(), 250); }
     }
+
+    if (!location.pathname.startsWith("/marketplace")) return;
+
+    // Re-extract data for the new listing
+    if (isListingPage()) {
+      try { latestData = extractFacebookData(); dataStale = false; } catch (_) {}
+    }
+
+    checkAndShowCard();
+    chrome.runtime.sendMessage(
+      { type: isListingPage() ? "FACEBOOK_MARKETPLACE_PAGE" : "FACEBOOK_NOT_MARKETPLACE_PAGE" },
+      () => { if (chrome.runtime.lastError) {} }
+    );
   }, 500);
 
   // ===============================
@@ -706,25 +826,58 @@
     console.log("Facebook content script received message:", message.type);
 
     if (message.type === "EXTRACT_DATA") {
-      console.log("Facebook: handling EXTRACT_DATA");
-      const data = extractFacebookData();
-      console.log("Facebook extracted data:", data);
-      sendResponse(data);
+      try {
+        const data = extractFacebookData();
+        latestData = data; dataStale = false;
+        sendResponse(data);
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
       return true;
     }
 
     if (message.type === "EXTRACT_REVIEWS") {
-      console.log("Facebook: handling EXTRACT_REVIEWS");
-      const comments = extractFacebookComments(10);
-      console.log("Facebook extracted comments:", comments);
-      sendResponse({ reviews: comments.value });
+      try {
+        const comments = extractFacebookComments(10);
+        sendResponse({ reviews: comments.value });
+      } catch (_) {
+        sendResponse({ reviews: [] });
+      }
+      return true;
+    }
+
+    if (message.type === "START_PROGRESSIVE_COLLECTION") {
+      startFacebookProgressiveCollection();
+      sendResponse({ started: true });
+      return true;
+    }
+
+    if (message.type === "STOP_PROGRESSIVE_COLLECTION") {
+      stopFacebookProgressiveCollection();
+      sendResponse({ stopped: true });
+      return true;
+    }
+
+    if (message.type === "FACEBOOK_RESTART_COLLECTION") {
+      fbCollectedComments = [];
+      startFacebookProgressiveCollection();
+      sendResponse({ restarted: true });
+      return true;
+    }
+
+    if (message.type === "GET_PROGRESSIVE_REVIEWS") {
+      sendResponse({ reviews: fbCollectedComments });
       return true;
     }
 
     if (message.type === "COLLECT_PAGE_DATA") {
-      latestData = extractFacebookData();
-      dataStale = false;
-      sendResponse(latestData);
+      try {
+        latestData = extractFacebookData();
+        dataStale = false;
+        sendResponse(latestData);
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
       return true;
     }
 

@@ -67,6 +67,7 @@ const activationMessage = document.getElementById("activationMessage");
 // Progressive collection state
 let lastShopeeProductData = null;
 let lastLazadaProductData = null;
+let lastFacebookProductData = null;
 let progressiveState = "idle"; // "idle" | "scanning" | "stopped"
 
 function showActivationMessage(text, isError = true) {
@@ -259,8 +260,41 @@ activateBtn.addEventListener("click", async () => {
   }
 });
 
+// -----------------------------------------------------------------------
+// Confidence Score — measures data completeness, not risk accuracy.
+// Six tracked fields: price, shop_age, rating, rating_count,
+//                     description, response_rate / seller_rating
+// -----------------------------------------------------------------------
+function computeConfidence(productData) {
+  if (!productData) return null;
+
+  const has = v => v !== null && v !== undefined && v !== '' && v !== 0;
+
+  const FIELDS = [
+    { key: 'price',         label: 'Price',               present: has(productData.price) },
+    { key: 'shop_age',      label: 'Seller join date',    present: has(productData.shop_age) },
+    { key: 'rating',        label: 'Aggregate rating',    present: has(productData.rating) },
+    { key: 'rating_count',  label: 'Rating count',        present: has(productData.rating_count) },
+    { key: 'description',   label: 'Product description', present: has(productData.description) },
+    {
+      key: 'response_rate',
+      label: 'Response rate',
+      present: has(productData.response_rate) || has(productData.seller_rating)
+    },
+  ];
+
+  const fieldsPresent = FIELDS.filter(f => f.present).length;
+  const fieldsMissing = FIELDS.filter(f => !f.present).map(f => f.label);
+  const confidencePercentage = Math.round((fieldsPresent / FIELDS.length) * 100);
+  const confidenceLevel = fieldsPresent >= 5 ? 'High'
+                        : fieldsPresent >= 3 ? 'Moderate'
+                        : 'Low';
+
+  return { confidenceLevel, confidencePercentage, fieldsPresent, fieldsMissing, total: FIELDS.length };
+}
+
 // Clean function to show only PRODUCT risk assessment
-function showRiskAssessment(riskScore, riskLevel, description, productData = null) {
+function showRiskAssessment(riskScore, riskLevel, description, productData = null, scanResult = null) {
   const timestamp = new Date().toLocaleString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -268,17 +302,106 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     hour: '2-digit',
     minute: '2-digit'
   });
-  
-  let riskMessage;
-  if (riskLevel === 'High') {
-    riskMessage = 'This product appears risky. Exercise extreme caution and consider avoiding this purchase.';
-  } else if (riskLevel === 'Medium') {
-    riskMessage = 'This product has some risk factors. Please review carefully before purchasing.';
-  } else {
-    riskMessage = 'This product appears to be relatively safe based on current analysis.';
+
+  // Use backend risk message if available; fall back to hardcoded strings
+  const riskMessage = scanResult?.risk_message
+    || (riskLevel === 'High'
+        ? 'This product appears risky. Exercise extreme caution and consider avoiding this purchase.'
+        : riskLevel === 'Medium'
+        ? 'This product has some risk factors. Please review carefully before purchasing.'
+        : 'This product appears to be relatively safe based on current analysis.');
+
+  // Prefer backend confidence (handles Facebook 3-field recalibration correctly).
+  // Fall back to client-side computation when no backend result is available.
+  const rawConf = scanResult?.confidence;
+  const conf = rawConf
+    ? {
+        confidenceLevel:      rawConf.level,
+        confidencePercentage: rawConf.percentage,
+        fieldsPresent:        rawConf.fields_present,
+        fieldsMissing:        (rawConf.missing_fields || []).map(k => ({
+          price: 'Price', shop_age: 'Seller join date', rating: 'Aggregate rating',
+          rating_count: 'Rating count', description: 'Product description',
+          response_rate: 'Response rate',
+        })[k] || k),
+        total: rawConf.total_fields,
+      }
+    : computeConfidence(productData);
+  let confidenceHTML = '';
+  if (conf) {
+    const lvlClass = `confidence-${conf.confidenceLevel.toLowerCase()}`;
+    const missingNote = conf.fieldsMissing.length > 0
+      ? `<div class="confidence-missing">${conf.fieldsMissing.join(', ')} could not be retrieved.</div>`
+      : '';
+    confidenceHTML = `
+      <div class="confidence-block ${lvlClass}">
+        <div class="confidence-row">
+          <span class="confidence-label"><i class="fas fa-database"></i> Confidence</span>
+          <span class="confidence-badge ${lvlClass}">
+            ${conf.confidenceLevel}
+            <span class="confidence-tooltip" title="Confidence measures how much data was available for analysis — not how accurate the risk score is. A lower confidence means fewer data points were retrieved.">
+              <i class="fas fa-circle-info"></i>
+            </span>
+          </span>
+        </div>
+        <div class="confidence-detail">${conf.fieldsPresent} of ${conf.total} data points retrieved</div>
+        <div class="confidence-bar-wrap">
+          <div class="confidence-bar ${lvlClass}" style="width:${conf.confidencePercentage}%"></div>
+        </div>
+        ${missingNote}
+      </div>`;
+  }
+  // Flags — populate Scan Summary section
+  let scanSummaryHTML = '';
+  if (scanResult?.flags?.length) {
+    scanSummaryHTML = scanResult.flags
+      .map(f => `<div class="flag-item"><i class="fas fa-exclamation-triangle"></i>${f}</div>`)
+      .join('');
+  }
+  const scanSummarySection = scanSummaryHTML
+    ? `<div class="scan-summary-section" id="scanSummary">
+        <div class="scan-summary-header"><i class="fas fa-clipboard-list"></i> Scan Summary</div>
+        <div class="scan-summary-body">${scanSummaryHTML}</div>
+      </div>`
+    : '';
+
+  // Product Notice — authenticity / edition indicators (separate from risk score)
+  let productNoticeHTML = '';
+  if (scanResult?.product_notice) {
+    const pn = scanResult.product_notice;
+    const inds = (pn.indicators || []).map(i =>
+      `<div class="notice-indicator"><i class="fas fa-circle-dot"></i>${i}</div>`).join('');
+    productNoticeHTML = `
+      <div class="product-notice-block">
+        <div class="product-notice-header"><i class="fas fa-info-circle"></i> ${pn.title}</div>
+        <div class="product-notice-message">${pn.message}</div>
+        ${inds}
+        <div class="product-notice-disclaimer">${pn.disclaimer}</div>
+      </div>`;
   }
 
-  // Build the 5 key data rows (Platform → Product → Price → Seller → Rating)
+  // Bot / Fake Review Analysis — only shown when reviews were actually analyzed
+  let botAnalysisHTML = '';
+  if (scanResult?.comment_analysis?.reviews_analyzed > 0) {
+    const ca = scanResult.comment_analysis;
+    const botClass  = ca.bot_likelihood_pct  >= 50 ? 'analysis-high' : ca.bot_likelihood_pct  >= 25 ? 'analysis-medium' : 'analysis-low';
+    const fakeClass = ca.fake_review_pct >= 50 ? 'analysis-high' : ca.fake_review_pct >= 25 ? 'analysis-medium' : 'analysis-low';
+    botAnalysisHTML = `
+      <div class="bot-analysis-block">
+        <div class="bot-analysis-header"><i class="fas fa-robot"></i> Comment Analysis <span class="analysis-count">${ca.reviews_analyzed} reviewed</span></div>
+        <div class="bot-analysis-rows">
+          <div class="analysis-row">
+            <span class="analysis-label">Bot Likelihood</span>
+            <span class="analysis-badge ${botClass}">${ca.bot_likelihood_pct}%</span>
+          </div>
+          <div class="analysis-row">
+            <span class="analysis-label">Fake Review Signals</span>
+            <span class="analysis-badge ${fakeClass}">${ca.fake_review_pct}%</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
   let dataRowsHTML = '';
   if (productData) {
     const esc = v => String(v).replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -294,7 +417,11 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     dataRowsHTML = [
       row(platformIcon,       'Platform', productData.platform),
       row('fa-box-open',      'Product',  productData.product_name),
-      row('fa-tag',           'Price',    productData.price !== null && productData.price !== undefined ? `₱${Number(productData.price).toLocaleString()}` : null),
+      row('fa-tag',           'Price',    productData.price !== null && productData.price !== undefined
+          ? `₱${Number(productData.price).toLocaleString()}`
+          : productData.price_is_variant
+          ? 'Select a variant on the listing to determine price'
+          : null),
       row('fa-user-tie',      'Seller',   productData.seller_name),
       row('fa-star',          'Rating',   productData.rating !== null && productData.rating !== undefined ? `${productData.rating} / 5 (${productData.rating_count || 0} reviews)` : null),
     ].filter(Boolean).join('');
@@ -351,14 +478,17 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
         Risk Score: ${riskScore} / 100
       </div>
 
+      ${confidenceHTML}
+
       <div class="risk-message">
         ${riskMessage}
       </div>
 
-      <div class="scan-summary-section" id="scanSummary">
-        <div class="scan-summary-header"><i class="fas fa-clipboard-list"></i> Scan Summary</div>
-        <div class="scan-summary-body"></div>
-      </div>
+      ${scanSummarySection}
+
+      ${productNoticeHTML}
+
+      ${botAnalysisHTML}
 
       ${collectedDataHTML}
 
@@ -487,6 +617,21 @@ function performScan(isAutomatic = false, withReviews = false) {
         return;
       }
 
+      // Facebook variant listings: price range means the user hasn't selected a product type yet
+      if (response.price_is_variant) {
+        output.innerHTML = '';
+        const variantWarning = document.createElement('div');
+        variantWarning.className = 'variant-warning-card';
+        variantWarning.innerHTML = `
+          <div class="variant-warning-icon"><i class="fas fa-layer-group"></i></div>
+          <div class="variant-warning-title">Select a Variant First</div>
+          <div class="variant-warning-desc">This listing has multiple items at different prices. Please select a specific variant (size, color, type, etc.) on the Facebook page, then scan again.</div>
+        `;
+        output.appendChild(variantWarning);
+        resetButton();
+        return;
+      }
+
       console.log("Extracted data:", response);
       console.log("Product name from extraction:", response.product_name);
       output.textContent = "📡 Analyzing product data...";
@@ -527,6 +672,7 @@ function performScan(isAutomatic = false, withReviews = false) {
         // Cache for progressive restart
         if (currentTab.url.includes("shopee.ph")) lastShopeeProductData = productData;
         if (currentTab.url.includes("lazada.com.ph")) lastLazadaProductData = productData;
+        if (currentTab.url.includes("facebook.com")) lastFacebookProductData = productData;
 
         console.log("Product data to send to scan.php:", productData);
 
@@ -567,8 +713,9 @@ function performScan(isAutomatic = false, withReviews = false) {
 
           await chrome.storage.local.set(storageData);
 
-          // Show results
-          showRiskAssessment(result.risk_score, result.risk_level, response.description || null, productData);
+          // Show results — pass full backend result so risk_message, confidence,
+          // flags, product_notice and comment_analysis are all used
+          showRiskAssessment(result.risk_score, result.risk_level, response.description || null, productData, result);
 
           // Deep Scan: append reviews after risk card
           if (withReviews) {
@@ -616,9 +763,21 @@ function performScan(isAutomatic = false, withReviews = false) {
                 }
               );
             } else if (isFacebook) {
-              chrome.tabs.sendMessage(currentTab.id, { type: "EXTRACT_REVIEWS" }, (reviewResponse) => {
-                appendReviewsToOutput(reviewResponse?.reviews || [], false);
-              });
+              // Progressive collection for Facebook — same pattern as Lazada
+              chrome.tabs.sendMessage(
+                currentTab.id,
+                { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
+                () => {
+                  setCommentsButtonState("scanning");
+                  setTimeout(() => {
+                    chrome.tabs.sendMessage(
+                      currentTab.id,
+                      { type: "GET_PROGRESSIVE_REVIEWS" },
+                      (r) => appendReviewsToOutput(r?.reviews || [], false)
+                    );
+                  }, 600);
+                }
+              );
             }
           }
         } else {
@@ -640,6 +799,37 @@ function performScan(isAutomatic = false, withReviews = false) {
       }
     });
   });
+}
+
+// -----------------------------------------------------------------------
+// Re-scan with collected reviews to update risk score and activate
+// comment analysis (bot likelihood, fake review signals).
+// Deduplicated: only re-submits when review count increases.
+// -----------------------------------------------------------------------
+let lastRescanReviewCount = { lazada: 0, facebook: 0 };
+
+async function rescanWithReviews(productData, reviews, platformKey) {
+  if (!productData || !reviews.length) return;
+  if (reviews.length <= (lastRescanReviewCount[platformKey] || 0)) return;
+  lastRescanReviewCount[platformKey] = reviews.length;
+
+  const { accessToken } = await chrome.storage.local.get('accessToken');
+  if (!accessToken) return;
+
+  try {
+    const payload = { ...productData, reviews };
+    const resp = await fetch(`${SURESHOP_API_BASE}/scan.php`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) return;
+    const result = await resp.json();
+    if (result.risk_score !== undefined && result.risk_level !== undefined) {
+      const cachedData = platformKey === 'lazada' ? lastLazadaProductData : lastFacebookProductData;
+      showRiskAssessment(result.risk_score, result.risk_level, cachedData?.description || null, cachedData, result);
+    }
+  } catch (_) {}
 }
 
 // -----------------------------------------------------------------------
@@ -669,12 +859,29 @@ chrome.runtime.onMessage.addListener((message) => {
     setCommentsButtonState("scanning");
   }
 
-  // Direct reviews from content script — no backend roundtrip, shows them immediately
+  // Direct reviews from content script — display immediately then re-scan
+  // with reviews to update risk score and activate comment analysis.
   if (message.type === "LAZADA_REVIEWS_DIRECT") {
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, true);
+      rescanWithReviews(lastLazadaProductData, message.reviews, 'lazada');
     }
     return;
+  }
+
+  if (message.type === "FACEBOOK_REVIEWS_DIRECT") {
+    appendReviewsToOutput(message.reviews || [], false);
+    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
+      rescanWithReviews(lastFacebookProductData, message.reviews, 'facebook');
+    }
+    return;
+  }
+
+  if (message.type === "FACEBOOK_PROGRESSIVE_STOPPED") {
+    setCommentsButtonState("stopped");
+    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
+      appendReviewsToOutput(message.reviews, false);
+    }
   }
 
   if (message.type === "LAZADA_SCAN_UPDATED") {
@@ -713,14 +920,20 @@ function setCommentsButtonState(state) {
   if (state === "scanning") {
     commentsBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Collecting';
     commentsBtn.style.background = '#e74c3c';
+    commentsBtn.style.color = '#fff';
+    commentsBtn.style.borderColor = '#e74c3c';
     commentsBtn.disabled = false;
   } else if (state === "stopped") {
     commentsBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Collection';
     commentsBtn.style.background = '#1b9c85';
+    commentsBtn.style.color = '#fff';
+    commentsBtn.style.borderColor = '#1b9c85';
     commentsBtn.disabled = false;
   } else {
     commentsBtn.innerHTML = '<i class="fas fa-layer-group"></i> Deep Scan';
     commentsBtn.style.background = '';
+    commentsBtn.style.color = '';
+    commentsBtn.style.borderColor = '';
     commentsBtn.disabled = false;
     progressiveState = "idle";
   }
@@ -743,6 +956,8 @@ commentsBtn.addEventListener("click", () => {
       if (tabs[0]) {
         const restartType = tabs[0].url.includes("lazada.com.ph")
           ? "LAZADA_RESTART_COLLECTION"
+          : tabs[0].url.includes("facebook.com")
+          ? "FACEBOOK_RESTART_COLLECTION"
           : "SHOPEE_RESTART_COLLECTION";
         chrome.tabs.sendMessage(tabs[0].id, { type: restartType });
       }

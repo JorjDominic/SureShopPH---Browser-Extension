@@ -4,7 +4,10 @@
   // ===============================
   if (!location.hostname.includes("lazada.")) return;
 
-  console.log("ScamGuard content_lazada.js loaded (Lazada)");
+  // Detect iframe context — if we're inside a sub-frame, run only review extraction
+  const IS_IFRAME = window !== window.top;
+
+  console.log("ScamGuard content_lazada.js loaded (Lazada)", IS_IFRAME ? "[iframe]" : "[main]");
 
   // ===============================
   // API Base (mirrors popup.js)
@@ -308,21 +311,29 @@
 
   function extractSoldCount() {
     const text = document.body.innerText;
-    // Lazada shows "X Sold" or "X+ Sold"
-    const match = text.match(/([\d,]+\+?)\s+Sold/i);
-    if (match) return { value: match[1], confidence: "high" };
+
+    // Helper: expand "1K", "1.2K+", "10M" abbreviations to a plain number string
+    const expandAbbrev = raw => {
+      const m = raw.replace(/,/g, "").match(/^([\d.]+)([KkMm]?)\+?$/);
+      if (!m) return raw;
+      const n = parseFloat(m[1]);
+      if (m[2].toUpperCase() === "K") return String(Math.round(n * 1000));
+      if (m[2].toUpperCase() === "M") return String(Math.round(n * 1000000));
+      return String(Math.round(n));
+    };
+
+    // Matches "34K+ Sold", "1.2K Sold", "1,234 Sold", "34K+ sold"
+    const match = text.match(/([\d.,]+[KkMm]?\+?)\s+Sold/i);
+    if (match) return { value: expandAbbrev(match[1]), confidence: "high" };
 
     // Also try: "X sold in last 30 days" style
-    const altMatch = text.match(/([\d,]+)\s+(?:items?\s+)?sold/i);
+    const altMatch = text.match(/([\d.,]+[KkMm]?\+?)\s+(?:items?\s+)?sold/i);
     return altMatch
-      ? { value: altMatch[1], confidence: "medium" }
+      ? { value: expandAbbrev(altMatch[1]), confidence: "medium" }
       : { value: null, confidence: "low" };
   }
 
   function extractRatings() {
-    const text = document.body.innerText;
-
-    // Rating value e.g. "4.7" within a known range
     const ratingSelectors = [
       ".score-average",
       '[class*="rating-average"]',
@@ -330,17 +341,20 @@
     ];
 
     let rating = null;
+    let ratingEl = null;
     for (const sel of ratingSelectors) {
       const el = document.querySelector(sel);
       if (el) {
         const val = parseFloat(cleanText(el.textContent));
         if (!isNaN(val) && val >= 0 && val <= 5) {
           rating = { value: val, confidence: "high" };
+          ratingEl = el;
           break;
         }
       }
     }
 
+    const text = document.body.innerText;
     if (!rating) {
       const ratingMatch = text.match(/\b([0-5]\.\d)\b/);
       rating = ratingMatch
@@ -348,16 +362,71 @@
         : { value: null, confidence: "low" };
     }
 
-    // Review/rating count e.g. "(1,234 Ratings)"
-    const countMatch = text.match(/\(?([\d,]+)\s+Ratings?\)?/i);
-    const rating_count = countMatch
-      ? { value: countMatch[1], confidence: "high" }
-      : { value: null, confidence: "low" };
+    // ---- Rating count ----
+    // Strategy 1 (best): DOM proximity — walk up from the rating element.
+    // The count (e.g. 24055) is always in the same container as the rating.
+    let rating_count = { value: null, confidence: "low" };
+    if (ratingEl) {
+      let node = ratingEl;
+      for (let up = 0; up < 6 && node; up++) {
+        const ct = (node.textContent || "").replace(/\s/g, "");
+        // "(24055)" or "(24,055)"
+        const parenM = ct.match(/\(([0-9,]{3,})\)/);
+        if (parenM) {
+          const n = parseInt(parenM[1].replace(/,/g, ""), 10);
+          if (n > 9) { rating_count = { value: n, confidence: "high" }; break; }
+        }
+        // Lazada sometimes renders "4.924055" (no separator in textContent)
+        const smushedM = ct.match(/[0-5]\.\d([0-9]{4,})/);
+        if (smushedM) {
+          const n = parseInt(smushedM[1], 10);
+          if (n > 9) { rating_count = { value: n, confidence: "medium" }; break; }
+        }
+        node = node.parentElement;
+      }
+    }
+
+    // Strategy 2: any leaf element near a rating/review class whose text is
+    // a large bare number (3-6 digits)
+    if (!rating_count.value) {
+      const candidates = [...document.querySelectorAll(
+        '[class*="rating"] *, [class*="review"] *, [class*="score"] *'
+      )];
+      for (const el of candidates) {
+        if (el.childElementCount > 0) continue;
+        const t = (el.textContent || "").replace(/[,\s]/g, "");
+        if (/^\d{3,6}$/.test(t)) {
+          const n = parseInt(t, 10);
+          if (n > 9) { rating_count = { value: n, confidence: "medium" }; break; }
+        }
+      }
+    }
+
+    // Strategy 3: innerText regex fallbacks
+    if (!rating_count.value) {
+      const inlineM = text.match(/[0-5]\.\d\s*\(([\d,]+)\s*(?:Ratings?)?\)/i);
+      if (inlineM) rating_count = { value: parseInt(inlineM[1].replace(/,/g, ""), 10), confidence: "high" };
+    }
+    if (!rating_count.value) {
+      const wordM = text.match(/\(?(\d[\d,]*)\s+Ratings?\)?/i);
+      if (wordM) rating_count = { value: parseInt(wordM[1].replace(/,/g, ""), 10), confidence: "high" };
+    }
 
     return { rating, rating_count };
   }
 
   function extractSellerName() {
+    const isJunkName = t => !t || t.length < 2 || t.length > 100 ||
+      /^(seller response|chat now|go to store|flagship store|official store|lazmall|view all|more info|seller|ratings?|\d+%)/i.test(t);
+
+    // Strategy 1: shop link text — href contains "/shop/" and text is the store name
+    const shopLinks = [...document.querySelectorAll('a[href*="/shop/"]')];
+    for (const a of shopLinks) {
+      const text = cleanText(a.textContent);
+      if (!isJunkName(text)) return { value: text, confidence: "high" };
+    }
+
+    // Strategy 2: dedicated seller name selectors
     const sellerSelectors = [
       ".seller-name a",
       ".seller-name",
@@ -366,33 +435,21 @@
       '[data-spm*="seller"] span',
       ".pdp-mod-seller-info .info-name"
     ];
-
     for (const selector of sellerSelectors) {
       const el = document.querySelector(selector);
       if (el) {
         const text = cleanText(el.textContent);
-        if (text && text.length > 1 && text.length < 100) {
-          return { value: text, confidence: "high" };
-        }
+        if (!isJunkName(text)) return { value: text, confidence: "high" };
       }
     }
 
-    // Fallback: text patterns
-    const text = document.body.innerText;
-    const patterns = [
-      /Sold by[:\s]+([^\n]+)/i,
-      /Shop[:\s]+([^\n]{2,60})/i,
-      /Seller[:\s]+([^\n]{2,60})/i
-    ];
-
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match) {
-        const candidate = cleanText(match[1]);
-        if (candidate && candidate.length > 1) {
-          return { value: candidate, confidence: "medium" };
-        }
-      }
+    // Strategy 3: text patterns — only match lines that look like store names,
+    // not review section noise like "Seller Response"
+    const bodyText = document.body.innerText;
+    const soldByMatch = bodyText.match(/Sold by[:\s]+([^\n]{2,60})/i);
+    if (soldByMatch) {
+      const candidate = cleanText(soldByMatch[1]);
+      if (!isJunkName(candidate)) return { value: candidate, confidence: "medium" };
     }
 
     return { value: null, confidence: "low" };
@@ -422,8 +479,8 @@
 
   function extractSellerRating() {
     const text = document.body.innerText;
-    // Lazada shows "Positive Seller Ratings X%"
-    const match = text.match(/Positive\s+Seller\s+Ratings?\s*([\d.]+%)/i);
+    // Matches both "Seller Ratings 97%" and "Positive Seller Ratings 97%"
+    const match = text.match(/(?:Positive\s+)?Seller\s+Ratings?\s*(\d+(?:\.\d+)?%)/i);
     return match
       ? { value: match[1], confidence: "high" }
       : { value: null, confidence: "low" };
@@ -443,14 +500,18 @@
       '[class*="detail-content"]',
       "#html-desc",
       '[class*="description-content"]',
-      '[class*="pdp-mod-product-description"]'
+      '[class*="pdp-mod-product-description"]',
+      '[class*="description"]',
+      '[class*="product-detail"]',
+      '[class*="pdp-block"]',
+      '[data-spm*="description"]'
     ];
 
     for (const selector of descSelectors) {
       const el = document.querySelector(selector);
       if (el) {
         const text = cleanText(el.textContent);
-        if (text && text.length > 10) {
+        if (text && text.length > 30) {
           return { value: text.slice(0, 3000), confidence: "high" };
         }
       }
@@ -892,6 +953,32 @@
   }
 
   // ===============================
+  // Iframe Mode — runs inside Lazada sub-frames (e.g. reviews section)
+  // ===============================
+  if (IS_IFRAME) {
+    // Only run review extraction in iframes; skip all main-page logic
+    const sendIframeReviews = () => {
+      try {
+        const r = extractLazadaReviews(50);
+        if (r.value && r.value.length > 0) {
+          chrome.runtime.sendMessage({
+            type: "LAZADA_REVIEWS_DIRECT",
+            reviews: r.value
+          }).catch(() => {});
+          console.log("[SureShop iframe] Sent", r.value.length, "reviews from iframe");
+        }
+      } catch (_) {}
+    };
+    setTimeout(sendIframeReviews, 800);
+    let _iframeDebounce;
+    new MutationObserver(() => {
+      clearTimeout(_iframeDebounce);
+      _iframeDebounce = setTimeout(sendIframeReviews, 800);
+    }).observe(document.body, { childList: true, subtree: true });
+    return; // Do not run main-frame logic in iframes
+  }
+
+  // ===============================
   // Page Detection & Messaging
   // ===============================
   function checkAndShowCard() {
@@ -1149,8 +1236,181 @@
     }, 800);
   }
 
+  // ===============================
+  // Lazada Review API Fetcher
+  // ===============================
+
+  /**
+   * Try to read review data that Lazada has already injected into the page
+   * as a JavaScript variable (avoids any extra network request).
+   */
+  function extractReviewsFromPageState() {
+    const reviews = [];
+    // Lazada injects different keys depending on build version
+    const stateKeys = [
+      "__lzd_global_data__", "__pdpInitData__", "__INITIAL_STATE__",
+      "__LASG__", "__PAGE_DATA__", "pageData", "pdpInitialData"
+    ];
+    for (const key of stateKeys) {
+      try {
+        const state = window[key];
+        if (!state) continue;
+        // Recursively search for arrays that look like review lists
+        const findReviews = (obj, depth) => {
+          if (!obj || depth > 8 || reviews.length >= 50) return;
+          if (Array.isArray(obj)) {
+            // Looks like a review list if items have reviewContent or content + rating
+            if (obj.length > 0 && obj[0] && (
+              obj[0].reviewContent || obj[0].content || obj[0].reviewerName
+            )) {
+              for (const r of obj) {
+                const txt = r.reviewContent || r.content || r.body || "";
+                if (!txt.trim()) continue;
+                reviews.push({
+                  username: String(r.reviewerName || r.userName || r.nickname || "Anonymous").trim(),
+                  rating_stars: r.rating != null ? Math.min(5, Math.round(parseFloat(r.rating))) : null,
+                  text: String(txt).trim().slice(0, 400),
+                  date: r.boughtDate || r.createTime || r.date || null,
+                  variant: r.skuInfo || r.sku || null
+                });
+              }
+              return;
+            }
+            for (const item of obj) findReviews(item, depth + 1);
+          } else if (typeof obj === "object") {
+            for (const val of Object.values(obj)) findReviews(val, depth + 1);
+          }
+        };
+        findReviews(state, 0);
+        if (reviews.length > 0) {
+          console.log(`[SureShop] Got ${reviews.length} reviews from window.${key}`);
+          return reviews;
+        }
+      } catch (_) {}
+    }
+
+    // Also check for <script type="application/json"> or window.__lzd injected data
+    try {
+      const scripts = [...document.querySelectorAll('script:not([src])')];
+      for (const s of scripts) {
+        const t = s.textContent;
+        if (!t || !t.includes("reviewContent") && !t.includes("reviewerName")) continue;
+        // Pull out JSON object that contains reviews
+        const jsonMatch = t.match(/window\.[\w]+\s*=\s*({.{50,}})/s) ||
+                          t.match(/({\s*"reviews"\s*:\s*\[.{20,}\]})/s);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[1]);
+            const findReviews = (obj, depth) => {
+              if (!obj || depth > 8 || reviews.length >= 50) return;
+              if (Array.isArray(obj)) {
+                if (obj.length > 0 && obj[0] && (obj[0].reviewContent || obj[0].reviewerName)) {
+                  for (const r of obj) {
+                    const txt = r.reviewContent || r.content || "";
+                    if (!txt.trim()) continue;
+                    reviews.push({
+                      username: String(r.reviewerName || "Anonymous").trim(),
+                      rating_stars: r.rating != null ? Math.min(5, Math.round(parseFloat(r.rating))) : null,
+                      text: String(txt).trim().slice(0, 400),
+                      date: r.boughtDate || r.createTime || null,
+                      variant: r.skuInfo || null
+                    });
+                  }
+                  return;
+                }
+                for (const item of obj) findReviews(item, depth + 1);
+              } else if (typeof obj === "object") {
+                for (const val of Object.values(obj)) findReviews(val, depth + 1);
+              }
+            };
+            findReviews(parsed, 0);
+            if (reviews.length > 0) {
+              console.log(`[SureShop] Got ${reviews.length} reviews from inline script tag`);
+              return reviews;
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    return reviews; // empty if nothing found
+  }
+
+  /**
+   * Fetch reviews directly from Lazada's internal review API.
+   * Extracts the itemId from the URL (-i123456-s...) and calls the
+   * getReviewList endpoint which returns JSON — no DOM scraping needed.
+   */
+  async function fetchReviewsFromApi(maxPages = 5, pageSize = 20) {
+    const itemIdMatch = location.href.match(/-i(\d+)-s\d+\.html/);
+    if (!itemIdMatch) return [];
+    const itemId = itemIdMatch[1];
+
+    const reviews = [];
+    // Lazada PH uses my.lazada.com.ph for the review API; fall back to www.
+    const bases = [
+      "https://my.lazada.com.ph/pdp/review/getReviewList",
+      "https://www.lazada.com.ph/pdp/review/getReviewList"
+    ];
+    let workingBase = null;
+
+    for (let page = 1; page <= maxPages; page++) {
+      let gotData = false;
+      for (const base of (workingBase ? [workingBase] : bases)) {
+        try {
+          const url = `${base}?itemId=${itemId}&pageSize=${pageSize}&pageNo=${page}&filter=0&sort=0`;
+          const resp = await fetch(url, {
+            credentials: "include",
+            headers: { Accept: "application/json" }
+          });
+          if (!resp.ok) continue;
+          const data = await resp.json();
+
+          // Normalise response shape — different Lazada regions vary
+          const reviewList =
+            data?.result?.reviews ||
+            data?.data?.reviews ||
+            data?.reviews ||
+            [];
+
+          if (!Array.isArray(reviewList) || reviewList.length === 0) {
+            gotData = true; // reached end of pages
+            break;
+          }
+
+          workingBase = base;
+          gotData = true;
+
+          for (const r of reviewList) {
+            const text = r.reviewContent || r.content || r.body || "";
+            if (!text.trim()) continue;
+            reviews.push({
+              username: String(r.reviewerName || r.userName || r.nickname || "Anonymous").trim(),
+              rating_stars: r.rating != null ? Math.min(5, Math.round(parseFloat(r.rating))) : null,
+              text: String(text).trim().slice(0, 400),
+              date: r.boughtDate || r.createTime || r.date || null,
+              variant: r.skuInfo || r.sku || null
+            });
+          }
+
+          // Stop if we've hit the last page
+          const totalPages =
+            data?.result?.pager?.pageCount ||
+            data?.result?.totalPage ||
+            0;
+          if (totalPages && page >= totalPages) page = maxPages;
+          break;
+        } catch (_) {}
+      }
+      if (!gotData) break;
+    }
+
+    console.log(`[SureShop] fetchReviewsFromApi: ${reviews.length} reviews for itemId=${itemId}`);
+    return reviews;
+  }
+
   /** Start watching for new review pages the user navigates to */
-  function startProgressiveCollection(scanData) {
+  async function startProgressiveCollection(scanData) {
     stopProgressiveCollection(false); // silent cleanup of any previous session
 
     progressiveReviews = [];
@@ -1161,32 +1421,109 @@
     progressiveScanData = scanData;
     progressiveActive = true;
 
-    // Harvest reviews already visible on the current page
-    const initial = harvestNewReviews();
-    progressiveReviews.push(...initial);
-    console.log(`[SureShop] Progressive collection started. Initial reviews: ${progressiveReviews.length}`);
+    setCardScanningState(null, null, 0);
 
-    // Scroll to the Ratings & Reviews section to trigger Lazada's lazy load
+    // ---------------------------------------------------------------
+    // STEP 0: Page state — zero network cost; reads reviews Lazada has
+    // already loaded into window variables or <script> tags on this page.
+    // ---------------------------------------------------------------
     try {
-      const reviewHeadings = [...document.querySelectorAll('*')].filter(el =>
-        el.childElementCount === 0 &&
-        /Ratings?\s*[&and]*\s*Reviews?|Customer\s+Reviews?/i.test((el.textContent || '').trim()) &&
-        (el.textContent || '').trim().length < 80
-      );
-      const target = reviewHeadings[0] || document.querySelector(
-        '[class*="review"], [class*="rating"], [id*="review"], [id*="rating"]'
-      );
-      if (target) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        console.log('[SureShop] Scrolled to reviews section to trigger lazy load');
+      const stateReviews = extractReviewsFromPageState();
+      if (stateReviews.length > 0 && progressiveActive) {
+        for (const r of stateReviews) {
+          const key = makeReviewKey(r);
+          if (!seenReviewKeys.has(key)) {
+            seenReviewKeys.add(key);
+            progressiveReviews.push(r);
+          }
+        }
+        console.log(`[SureShop] Page state: ${progressiveReviews.length} reviews`);
+        chrome.runtime.sendMessage({
+          type: "LAZADA_REVIEWS_DIRECT",
+          reviews: progressiveReviews
+        }).catch(() => {});
+        setCardScanningState(null, null, progressiveReviews.length);
       }
     } catch (_) {}
 
-    // Always observe body — pagination controls live outside the ratings section
+    // ---------------------------------------------------------------
+    // STEP 1: Lazada review API — most reliable; bypasses all class
+    // obfuscation and tab-click timing issues entirely.
+    // ---------------------------------------------------------------
+    try {
+      const apiReviews = await fetchReviewsFromApi(5, 20);
+      if (apiReviews.length > 0 && progressiveActive) {
+        for (const r of apiReviews) {
+          const key = makeReviewKey(r);
+          if (!seenReviewKeys.has(key)) {
+            seenReviewKeys.add(key);
+            progressiveReviews.push(r);
+          }
+        }
+        console.log(`[SureShop] API got ${progressiveReviews.length} reviews — sending to popup`);
+        chrome.runtime.sendMessage({
+          type: "LAZADA_REVIEWS_DIRECT",
+          reviews: progressiveReviews
+        }).catch(() => {});
+        sendProgressiveUpdate();
+        setCardScanningState(null, null, progressiveReviews.length);
+      } else {
+        console.log("[SureShop] API returned 0 reviews — will fall back to DOM");
+      }
+    } catch (e) {
+      console.warn("[SureShop] API fetch threw:", e.message);
+    }
+
+    if (!progressiveActive) return; // stopped while awaiting API
+
+    // ---------------------------------------------------------------
+    // STEP 2: Click the "Ratings & Reviews" tab so the DOM also loads
+    // (feeds the MutationObserver below and covers API failures).
+    // ---------------------------------------------------------------
+    let reviewTabClicked = false;
+    try {
+      const allEls = [...document.querySelectorAll(
+        "a, button, li, div, span, [role='tab'], [role='menuitem'], [class*='tab'], [class*='nav']"
+      )];
+      let reviewTab = allEls.find(el => {
+        const t = ((el.innerText || el.textContent) || "").trim();
+        return /Ratings?\s*[&+]?\s*Reviews?/i.test(t) && t.length < 80;
+      });
+      if (!reviewTab) {
+        reviewTab = allEls.find(el => {
+          const t = ((el.innerText || el.textContent) || "").trim();
+          return /^Ratings?$|^Reviews?$|^Reviews?\s*\(\d/i.test(t) && t.length < 60;
+        });
+      }
+      if (reviewTab) {
+        reviewTab.scrollIntoView({ behavior: "smooth", block: "center" });
+        reviewTab.click();
+        reviewTabClicked = true;
+        console.log("[SureShop] Clicked Reviews tab:", (reviewTab.innerText || reviewTab.textContent).trim().slice(0, 60));
+      }
+    } catch (_) {}
+
+    // ---------------------------------------------------------------
+    // STEP 3: DOM MutationObserver + timed DOM harvest retries.
+    // Catches reviews that appear in the DOM after the tab click.
+    // ---------------------------------------------------------------
     reviewMutationObserver = new MutationObserver(onReviewDomChange);
     reviewMutationObserver.observe(document.body, { childList: true, subtree: true });
 
-    // Retry harvest every 3s for the first 30s to catch lazy-loaded reviews
+    setTimeout(() => {
+      if (!progressiveActive) return;
+      const initial = harvestNewReviews();
+      if (initial.length > 0) {
+        progressiveReviews.push(...initial);
+        chrome.runtime.sendMessage({
+          type: "LAZADA_REVIEWS_DIRECT",
+          reviews: progressiveReviews
+        }).catch(() => {});
+        sendProgressiveUpdate();
+        setCardScanningState(null, null, progressiveReviews.length);
+      }
+    }, reviewTabClicked ? 1500 : 500);
+
     let retryCount = 0;
     const retryInterval = setInterval(() => {
       if (!progressiveActive || retryCount >= 10) {
@@ -1197,17 +1534,14 @@
       const found = harvestNewReviews();
       if (found.length > 0) {
         progressiveReviews.push(...found);
-        console.log(`[SureShop] Retry harvest: +${found.length} reviews (total: ${progressiveReviews.length})`);
         chrome.runtime.sendMessage({
           type: "LAZADA_REVIEWS_DIRECT",
           reviews: progressiveReviews
         }).catch(() => {});
         sendProgressiveUpdate();
+        setCardScanningState(lastProgressiveScore, lastProgressiveLevel, progressiveReviews.length);
       }
     }, 3000);
-
-    // Show "Scanning Comments..." state on the overlay immediately
-    setCardScanningState(null, null, progressiveReviews.length);
   }
 
   /**

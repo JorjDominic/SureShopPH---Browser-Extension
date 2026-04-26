@@ -159,9 +159,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.action.openPopup();
     sendResponse({ received: true, action: "popup_opened" });
   }
+
+  if (message.type === "OPEN_SIDE_PANEL") {
+    if (sender.tab?.id) {
+      chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => {});
+    }
+    sendResponse({ received: true, action: "side_panel_opened" });
+  }
   
   // Log if unknown message type
-  if (!["SURESHOPPH_PRODUCT_PAGE", "SURESHOPPH_NOT_PRODUCT_PAGE", "LAZADA_PRODUCT_PAGE", "LAZADA_NOT_PRODUCT_PAGE", "FACEBOOK_MARKETPLACE_PAGE", "FACEBOOK_NOT_MARKETPLACE_PAGE", "URL_SCAN_PAGE", "OPEN_POPUP", "GET_TAB_ID"].includes(message.type)) {
+  if (!["SURESHOPPH_PRODUCT_PAGE", "SURESHOPPH_NOT_PRODUCT_PAGE", "LAZADA_PRODUCT_PAGE", "LAZADA_NOT_PRODUCT_PAGE", "FACEBOOK_MARKETPLACE_PAGE", "FACEBOOK_NOT_MARKETPLACE_PAGE", "URL_SCAN_PAGE", "OPEN_POPUP", "OPEN_SIDE_PANEL", "GET_TAB_ID"].includes(message.type)) {
     debugLog("❓", "UNKNOWN MESSAGE TYPE:", message.type);
     sendResponse({ received: true, action: "unknown_message" });
   }
