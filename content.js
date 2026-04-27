@@ -224,7 +224,7 @@ function showScanCard() {
     const faLink = document.createElement('link');
     faLink.id = 'sureshop-fa-css';
     faLink.rel = 'stylesheet';
-    faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css';
+    faLink.href = chrome.runtime.getURL('fonts/fa/fa-solid-combined.css');
     document.head.appendChild(faLink);
   }
   document.head.appendChild(style);
@@ -1041,6 +1041,21 @@ function showScanCard() {
   // Product Description
   // ===============================
   function extractProductDescription() {
+    const norm = l => l.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+    const isReviewsSectionLine = rawL => {
+      const l = norm(rawL);
+      return (
+        /^Product\s+Ratings?/i.test(l) ||
+        /\d+(\.\d+)?\s+out\s+of\s+5/i.test(l) ||
+        /^All\s*\d+\s*Star/i.test(l) ||
+        /With\s+(Comments?|Media)/i.test(l) ||
+        /^\d{4}-\d{2}-\d{2}[\s|]/.test(l) ||
+        /^\d{1,2}\s+\w{3,9}\s+\d{4}$/.test(l) ||
+        /\|\s*Variation:/i.test(l) ||
+        /^[a-z0-9]\*{3,}[a-z0-9]+$/i.test(l)       // masked username "r*****l"
+      );
+    };
+
     // Strategy 1: dedicated description containers
     const descSelectors = [
       '[class*="product-detail"] [class*="description"]',
@@ -1051,31 +1066,64 @@ function showScanCard() {
 
     for (const selector of descSelectors) {
       const el = document.querySelector(selector);
-      if (el) {
-        const text = cleanText(el.textContent);
-        if (text && text.length > 10) {
-          return { value: text.slice(0, 3000), confidence: "high" };
+      if (!el) continue;
+
+      const descImgCount = el.querySelectorAll('img').length;
+      const rawLines = (el.innerText || el.textContent || "")
+        .split("\n").map(l => l.trim()).filter(Boolean);
+      const stopIdx = rawLines.findIndex(l => isReviewsSectionLine(l));
+
+      // stopIdx === 0 means reviews start immediately — no real description here
+      if (stopIdx === 0) continue;
+
+      const safeLines = stopIdx !== -1 ? rawLines.slice(0, stopIdx) : rawLines;
+      const text = safeLines.join(" ").trim();
+
+      if (text.length > 10) {
+        const prefix = descImgCount > 0 ? `[Images: ${descImgCount}]\n` : "";
+        return { value: (prefix + text).slice(0, 3000), confidence: "high" };
+      }
+      if (descImgCount > 0) {
+        return { value: `[Images: ${descImgCount}]`, confidence: "medium" };
+      }
+    }
+
+    // Strategy 2: locate the "Product Description" section in body innerText
+    const bodyLines = (document.body.innerText || "").split("\n").map(l => l.trim());
+    const headingIdx = bodyLines.findIndex(l =>
+      /^Product\s+Description$/i.test(norm(l))
+    );
+    if (headingIdx !== -1) {
+      const after = bodyLines.slice(headingIdx + 1).filter(l => l.length > 0);
+
+      // If the first real line is already a review line, no description exists
+      if (after.length === 0 || isReviewsSectionLine(after[0])) {
+        // fall through to image-count fallback below
+      } else {
+        const stopIdx = after.findIndex(l =>
+          isReviewsSectionLine(l) ||
+          /^(Product\s+Rating|Reviews?|Shop|Seller|Add\s+to\s+Cart)\s*$/i.test(norm(l))
+        );
+        const desc = after.slice(0, stopIdx !== -1 ? stopIdx : 20).join(" ").trim();
+        if (desc.length > 10) {
+          return { value: desc.slice(0, 3000), confidence: "medium" };
         }
       }
     }
 
-    // Strategy 2: locate the "Product Description" section in page text
-    const bodyText = document.body.innerText;
-    const idx = bodyText.search(/Product\s+Description/i);
-    if (idx !== -1) {
-      const section = bodyText
-        .slice(idx + "Product Description".length, idx + 1500)
-        .trim();
-      const stopIdx = section.search(
-        /\n(Product Rating|Reviews?|Shop|Seller|Add to Cart)/i
-      );
-      const desc = (stopIdx !== -1 ? section.slice(0, stopIdx) : section).trim();
-      if (desc.length > 10) {
-        return { value: desc.slice(0, 3000), confidence: "medium" };
-      }
-    }
-
-    return { value: null, confidence: "low" };
+    // No text description found — count product images as a last resort
+    const allDescImgs = descSelectors.reduce((acc, sel) => {
+      const el = document.querySelector(sel);
+      return el ? acc + el.querySelectorAll('img').length : acc;
+    }, 0);
+    const galleryImgs = document.querySelectorAll(
+      'img[src*="shopee"], [class*="gallery"] img, [class*="product-image"] img'
+    ).length;
+    const totalImgs = allDescImgs || galleryImgs;
+    const fallback = totalImgs > 0
+      ? `No text description found. ${totalImgs} product image${totalImgs !== 1 ? 's' : ''} detected.`
+      : 'No product description found.';
+    return { value: fallback, confidence: "low" };
   }
 
   // ===============================

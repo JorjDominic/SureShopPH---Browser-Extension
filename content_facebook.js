@@ -254,15 +254,8 @@
       const faLink = document.createElement('link');
       faLink.id = 'sureshop-fa-css';
       faLink.rel = 'stylesheet';
-      faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css';
+      faLink.href = chrome.runtime.getURL('fonts/fa/fa-solid-combined.css');
       document.head.appendChild(faLink);
-    }
-    if (!document.getElementById('sureshop-poppins-css')) {
-      const poppinsLink = document.createElement('link');
-      poppinsLink.id = 'sureshop-poppins-css';
-      poppinsLink.rel = 'stylesheet';
-      poppinsLink.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap';
-      document.head.appendChild(poppinsLink);
     }
     document.head.appendChild(style);
     document.body.appendChild(card);
@@ -681,6 +674,16 @@
       const description = extractDescription();
       const imageCount = extractImageCount();
 
+      // Build a details prefix from structured fields and prepend to description
+      const detailLines = [];
+      if (condition.value) detailLines.push(`Condition: ${condition.value}`);
+      if (locationInfo.value) detailLines.push(`Location: ${locationInfo.value}`);
+      if (listingDate.value) detailLines.push(`Listed: ${listingDate.value}`);
+      const detailsPrefix = detailLines.length > 0
+        ? `[Details]\n${detailLines.join("\n")}\n\n`
+        : "";
+      const fullDescription = detailsPrefix + (description.value || "");
+
       return {
         success: true,
         platform: "facebook",
@@ -692,7 +695,7 @@
         condition: condition.value,
         location: locationInfo.value,
         listing_date: listingDate.value,
-        description: description.value,
+        description: fullDescription || null,
         image_count: imageCount.value,
         // Explicit nulls — scan.php skips scoring checks that don't apply to FB
         sold_count: null,

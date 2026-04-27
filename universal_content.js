@@ -113,8 +113,6 @@
 
     const style = document.createElement("style");
     style.textContent = `
-      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
-
       /* Design tokens — matches popup.css */
       #sureshop-url-scan-card {
         --color-primary: #1b9c85;
@@ -383,7 +381,7 @@
       const faLink = document.createElement('link');
       faLink.id = 'sureshop-fa-css';
       faLink.rel = 'stylesheet';
-      faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css';
+      faLink.href = chrome.runtime.getURL('fonts/fa/fa-solid-combined.css');
       document.head.appendChild(faLink);
     }
     document.head.appendChild(style);

@@ -423,6 +423,9 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
           ? 'Select a variant on the listing to determine price'
           : null),
       row('fa-user-tie',      'Seller',   productData.seller_name),
+      row('fa-certificate',   'Badges',   Array.isArray(productData.seller_badges) && productData.seller_badges.length > 0
+          ? productData.seller_badges.join(' · ')
+          : null),
       row('fa-star',          'Rating',   productData.rating !== null && productData.rating !== undefined ? `${productData.rating} / 5 (${productData.rating_count || 0} reviews)` : null),
     ].filter(Boolean).join('');
   }
@@ -657,6 +660,7 @@ function performScan(isAutomatic = false, withReviews = false) {
           shop_age: response.shop_age,
           // Lazada-specific
           seller_rating: response.seller_rating,
+          seller_badges: response.seller_badges || null,
           // Facebook-specific
           condition: response.condition,
           location: response.location,

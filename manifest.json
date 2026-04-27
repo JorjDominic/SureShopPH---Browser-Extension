@@ -83,5 +83,20 @@
       "48": "icon48.png",
       "128": "icon128.png"
     }
-  }
+  },
+  "web_accessible_resources": [{
+    "resources": [
+      "fonts/fa/fa-solid-combined.css",
+      "fonts/fa/webfonts/fa-solid-900.woff2",
+      "fonts/fa/webfonts/fa-solid-900.ttf",
+      "fonts/poppins/poppins.css",
+      "fonts/poppins/poppins-300.woff2",
+      "fonts/poppins/poppins-400.woff2",
+      "fonts/poppins/poppins-500.woff2",
+      "fonts/poppins/poppins-600.woff2",
+      "fonts/poppins/poppins-700.woff2",
+      "fonts/poppins/poppins-800.woff2"
+    ],
+    "matches": ["<all_urls>"]
+  }]
 }

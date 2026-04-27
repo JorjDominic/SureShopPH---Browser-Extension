@@ -236,7 +236,7 @@
       const faLink = document.createElement('link');
       faLink.id = 'sureshop-fa-css';
       faLink.rel = 'stylesheet';
-      faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css';
+      faLink.href = chrome.runtime.getURL('fonts/fa/fa-solid-combined.css');
       document.head.appendChild(faLink);
     }
     document.head.appendChild(style);
@@ -486,6 +486,77 @@
       : { value: null, confidence: "low" };
   }
 
+  function extractSellerBadges() {
+    const badges = [];
+    const seen = new Set();
+
+    const addBadge = (text) => {
+      const clean = text.replace(/\s+/g, " ").trim();
+      if (!clean || seen.has(clean.toLowerCase())) return;
+      seen.add(clean.toLowerCase());
+      badges.push(clean);
+    };
+
+    // Strategy 1: badge/tag elements near the seller info block
+    const badgeSelectors = [
+      '[class*="seller-tag"]',
+      '[class*="seller-badge"]',
+      '[class*="store-badge"]',
+      '[class*="store-tag"]',
+      '[class*="pdp-badge"]',
+      '[class*="official-tag"]',
+      '[class*="preferred-seller"]',
+      '[class*="lazmall"]',
+      '[class*="flagship"]',
+      '[class*="mall-tag"]',
+      '[class*="seller-info"] [class*="tag"]',
+      '[class*="seller-info"] [class*="badge"]',
+      '[class*="pdp-seller"] [class*="tag"]',
+      '[class*="pdp-seller"] [class*="badge"]',
+    ];
+    for (const sel of badgeSelectors) {
+      document.querySelectorAll(sel).forEach(el => {
+        const text = (el.textContent || "").trim();
+        if (text.length > 0 && text.length < 60) addBadge(text);
+      });
+    }
+
+    // Strategy 2: images with alt text for known badges (LazMall icon, etc.)
+    document.querySelectorAll('img[alt]').forEach(img => {
+      const alt = (img.alt || "").trim();
+      if (/lazmall|flagship|preferred\s*seller|top\s*seller/i.test(alt) && alt.length < 60) {
+        addBadge(alt);
+      }
+    });
+
+    // Strategy 3: scan innerText near the seller name for known badge keywords
+    const bodyText = document.body.innerText;
+    const knownBadges = [
+      "LazMall", "Flagship Store", "Preferred Seller",
+      "New Arrival", "Top Seller", "Official Store"
+    ];
+    // Find the "Seller Ratings" block as an anchor, look ±400 chars around it
+    const anchorIdx = bodyText.search(/Seller\s+Ratings?/i);
+    const searchZone = anchorIdx !== -1
+      ? bodyText.slice(Math.max(0, anchorIdx - 400), anchorIdx + 400)
+      : bodyText.slice(0, 2000);
+    for (const badge of knownBadges) {
+      if (new RegExp(badge.replace(/\s+/g, "\\s+"), "i").test(searchZone)) {
+        addBadge(badge);
+      }
+    }
+
+    // Strategy 4: year badge — "X-Year Store" pattern
+    const yearMatch = bodyText.match(/(\d+)-Year\s+Store/i);
+    if (yearMatch) addBadge(yearMatch[0]);
+
+    // Strategy 5: top seller category — "Top1 Seller for Desktop Computers"
+    const topSellerMatch = bodyText.match(/Top\d+\s+Seller\s+for\s+[^\n]{2,50}/i);
+    if (topSellerMatch) addBadge(topSellerMatch[0].trim());
+
+    return { value: badges.length > 0 ? badges : null, confidence: badges.length > 0 ? "high" : "low" };
+  }
+
   function extractProductImageCount() {
     const images = document.querySelectorAll(
       'img[src*="lazada"], img[data-src*="lazada"], [class*="gallery"] img'
@@ -494,46 +565,102 @@
   }
 
   function extractProductDescription() {
-    // Strategy 1: dedicated description containers
+    // Normalise non-breaking spaces before testing
+    const norm = l => l.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+
+    // Lines that signal we've hit the ratings/reviews section — hard stop.
+    // NOTE: no $ anchor on most patterns so partial-line matches also fire.
+    const isReviewsSectionLine = rawL => {
+      const l = norm(rawL);
+      return (
+        /^Product\s+Ratings?/i.test(l) ||             // "Product Ratings" (with or without more text)
+        /\d+(\.\d+)?\s+out\s+of\s+5/i.test(l) ||     // "4.8 out of 5" anywhere in line
+        /^All\s*\d+\s*Star/i.test(l) ||               // "All5 Star (544)..."
+        /With\s+(Comments?|Media)/i.test(l) ||         // "With Comments (45)"
+        /^\d{4}-\d{2}-\d{2}[\s|]/.test(l) ||          // "2025-11-04 16:57" / "2026-01-26 22:39 |"
+        /^\d{1,2}\s+\w{3,9}\s+\d{4}$/.test(l) ||     // "06 Jan 2025"
+        /\|\s*Variation:/i.test(l) ||                  // "date | Variation: ..."
+        /^[a-z0-9]\*{3,}[a-z0-9]+$/i.test(l)          // masked username "r*****l"
+      );
+    };
+
+    // Strategy 1: dedicated description containers — specific selectors only
     const descSelectors = [
       '[class*="pdp-product-desc"]',
       '[class*="detail-content"]',
       "#html-desc",
       '[class*="description-content"]',
       '[class*="pdp-mod-product-description"]',
-      '[class*="description"]',
-      '[class*="product-detail"]',
-      '[class*="pdp-block"]',
-      '[data-spm*="description"]'
     ];
 
     for (const selector of descSelectors) {
       const el = document.querySelector(selector);
-      if (el) {
-        const text = cleanText(el.textContent);
-        if (text && text.length > 30) {
-          return { value: text.slice(0, 3000), confidence: "high" };
+      if (!el) continue;
+
+      const descImgCount = el.querySelectorAll('img').length;
+
+      // Use innerText to preserve newlines for line-by-line bleed detection
+      const rawLines = (el.innerText || el.textContent || "")
+        .split("\n").map(l => l.trim()).filter(Boolean);
+
+      const stopIdx = rawLines.findIndex(l => isReviewsSectionLine(l));
+
+      // stopIdx === 0 means the very first line is review content — skip this element
+      if (stopIdx === 0) continue;
+
+      const safeLines = stopIdx !== -1 ? rawLines.slice(0, stopIdx) : rawLines;
+      const text = safeLines.join(" ").trim();
+
+      if (text.length > 30) {
+        const prefix = descImgCount > 0 ? `[Images: ${descImgCount}]\n` : "";
+        return { value: (prefix + text).slice(0, 3000), confidence: "high", image_count: descImgCount };
+      }
+
+      // No text but has images (infographic-style description)
+      if (descImgCount > 0) {
+        return { value: `[Images: ${descImgCount}]`, confidence: "medium", image_count: descImgCount };
+      }
+    }
+
+    // Strategy 2: locate a "Product Details" / "Description" heading in body innerText,
+    // read forward until the first review-section line.
+    // If the very first content line after the heading is already a review line → no description exists.
+    const bodyLines = (document.body.innerText || "").split("\n").map(l => l.trim());
+    const headingIdx = bodyLines.findIndex(l =>
+      /^Product\s+Details?$/i.test(norm(l)) || /^Description$/i.test(norm(l))
+    );
+    if (headingIdx !== -1) {
+      const after = bodyLines.slice(headingIdx + 1).filter(l => l.length > 0);
+
+      // If the first real line after the heading is already a review line, bail out
+      if (after.length === 0 || isReviewsSectionLine(after[0])) {
+        // fall through to image-count fallback below
+      } else {
+        const stopIdx = after.findIndex(l =>
+          isReviewsSectionLine(l) ||
+          /^(Specifications?|Customer\s+Reviews?|Ratings?\s*&\s*Reviews?|You\s+May|Seller\s+Info|Highlights?)\s*$/i.test(norm(l))
+        );
+        const descLines = after.slice(0, stopIdx !== -1 ? stopIdx : 20);
+        const desc = descLines.join(" ").trim();
+        if (desc.length > 10) {
+          return { value: desc.slice(0, 3000), confidence: "medium", image_count: 0 };
         }
       }
     }
 
-    // Strategy 2: locate a description heading in page text
-    const bodyText = document.body.innerText;
-    const idx = bodyText.search(/Product\s+Details?|Description/i);
-    if (idx !== -1) {
-      const section = bodyText.slice(idx, idx + 1500);
-      const lines = section.split("\n").slice(1).map(l => l.trim()).filter(Boolean);
-      const stopIdx = lines.findIndex(l =>
-        /^(Specifications?|Customer|Reviews?|Rating|You May|Seller|Highlights?)/i.test(l)
-      );
-      const descLines = stopIdx !== -1 ? lines.slice(0, stopIdx) : lines.slice(0, 20);
-      const desc = descLines.join(" ").trim();
-      if (desc.length > 10) {
-        return { value: desc.slice(0, 3000), confidence: "medium" };
-      }
-    }
-
-    return { value: null, confidence: "low" };
+    // No text description found — count product images as a last resort
+    const allDescImgs = descSelectors.reduce((acc, sel) => {
+      const el = document.querySelector(sel);
+      return el ? acc + el.querySelectorAll('img').length : acc;
+    }, 0);
+    const galleryImgs = document.querySelectorAll(
+      'img[src*="lazada"], [class*="gallery"] img, [class*="product-image"] img'
+    ).length;
+    const totalImgs = allDescImgs || galleryImgs;
+    const fallback = totalImgs > 0
+      ? `No text description found. ${totalImgs} product image${totalImgs !== 1 ? 's' : ''} detected.`
+      : 'No product description found.';
+    return { value: fallback, confidence: "low", image_count: totalImgs };
   }
 
   // ===============================
@@ -930,6 +1057,7 @@
     const sellerName = extractSellerName();
     const profileUrl = extractProfileUrl();
     const sellerRating = extractSellerRating();
+    const sellerBadges = extractSellerBadges();
     const imageCount = extractProductImageCount();
     const description = extractProductDescription();
 
@@ -946,8 +1074,10 @@
       seller_name: sellerName.value,
       profile_url: profileUrl.value,
       seller_rating: sellerRating.value,
+      seller_badges: sellerBadges.value,
       image_count: imageCount.value,
       description: description.value,
+      description_image_count: description.image_count || 0,
       extracted_at: new Date().toISOString()
     };
   }
