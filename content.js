@@ -340,26 +340,33 @@ function showScanCard() {
   }
 
   function extractSoldCount() {
-    const match = document.body.innerText.match(
-      /(\d+(\.\d+)?K?\+?)\s+Sold/i
-    );
-    return match
-      ? { value: match[1], confidence: "high" }
-      : { value: null, confidence: "low" };
+    const text = document.body.innerText;
+    const match = text.match(/(\d+(\.\d+)?K?\+?)\s+Sold/i);
+    if (match) return { value: match[1], confidence: "high" };
+    // Explicit "0 Sold" that may render as a separate element
+    if (/\b0\s+Sold\b/i.test(text)) return { value: "0", confidence: "high" };
+    return { value: null, confidence: "low" };
   }
 
   // ⭐ Rating + number of ratings
   function extractRatings() {
     const text = document.body.innerText;
 
+    // No ratings yet — treat as 0 / 0
+    if (/no\s+ratings?\s+yet/i.test(text)) {
+      return {
+        rating:       { value: 0, confidence: "high" },
+        rating_count: { value: 0, confidence: "high" }
+      };
+    }
+
     const ratingMatch = text.match(/\b([0-5]\.\d)\b/);
-    const countMatch = text.match(/\b([\d,.]+K?)\s+Ratings?\b/i);
+    const countMatch  = text.match(/\b([\d,.]+K?)\s+Ratings?\b/i);
 
     return {
       rating: ratingMatch
         ? { value: Number(ratingMatch[1]), confidence: "high" }
         : { value: null, confidence: "low" },
-
       rating_count: countMatch
         ? { value: countMatch[1], confidence: "high" }
         : { value: null, confidence: "low" }
@@ -409,66 +416,59 @@ function showScanCard() {
   }
 
   function extractSellerName() {
-    // Strategy 1: Look for seller info in various common locations
+    const bodyText = document.body.innerText;
+
+    // Strategy 1: Find "Chat Now" in the page text; the shop name is the
+    // last meaningful line immediately before it in the seller block.
+    const chatIdx = bodyText.search(/\bChat\s+Now\b/i);
+    if (chatIdx !== -1) {
+      const zone = bodyText.slice(Math.max(0, chatIdx - 400), chatIdx);
+      const skipLine = /^(shopee\s*mall|official\s*store badge|chat\s*now|more\s*sellers|follow|ratings?|reviews?|sold|vouchers?|free\s*shipping|active\s+\w|online|last\s+active|\d)/i;
+      const lines = zone.split('\n')
+        .map(l => l.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const candidate = lines[i];
+        if (!skipLine.test(candidate) && isValidShopName(candidate) &&
+            candidate.length >= 3 && candidate.length <= 80) {
+          return { value: candidate, confidence: 'high' };
+        }
+      }
+    }
+
+    // Strategy 2: direct shop link — text or title attribute
+    for (const a of document.querySelectorAll('a[href*="/shop/"]')) {
+      const href = a.getAttribute('href') || '';
+      if (/\/(product|category|search|mall|login|cart|orders|promo|flash|voucher|discovery)/i.test(href)) continue;
+      const text = cleanText(a.textContent);
+      if (text && isValidShopName(text) && text.length > 3) return { value: text, confidence: 'high' };
+      const title = cleanText(a.getAttribute('title') || '');
+      if (title && isValidShopName(title) && title.length > 3) return { value: title, confidence: 'high' };
+    }
+
+    // Strategy 3: semantic CSS selectors (may work on older Shopee layouts)
     const sellerSelectors = [
-      '.seller-info .seller-name',
-      '.shop-info .shop-name', 
-      '.seller-name',
-      '.shop-name',
-      '[data-testid*="seller"] span',
-      '[data-testid*="shop"] span'
+      '.seller-info .seller-name', '.shop-info .shop-name',
+      '.seller-name', '.shop-name',
+      '[data-testid*="seller"] span', '[data-testid*="shop"] span'
     ];
-    
     for (const selector of sellerSelectors) {
-      const elements = document.querySelectorAll(selector);
-      for (const element of elements) {
-        const text = cleanText(element.textContent);
-        if (text && isValidShopName(text)) {
-          return { value: text, confidence: "high" };
-        }
+      for (const el of document.querySelectorAll(selector)) {
+        const text = cleanText(el.textContent);
+        if (text && isValidShopName(text)) return { value: text, confidence: 'high' };
       }
     }
 
-    // Strategy 2: Search for "Visit Shop" or similar links
-    const shopLinks = [...document.querySelectorAll('a')]
-      .filter(a => /visit.shop|go.to.shop|seller.profile/i.test(a.textContent) || 
-                   /shop|seller/i.test(a.getAttribute('title') || ''));
-    
-    for (const link of shopLinks) {
-      const parentText = cleanText(link.parentElement?.textContent || '');
-      const words = parentText.split(/\s+/).filter(w => 
-        w.length > 2 && 
-        !/visit|shop|profile|go|to|the/i.test(w)
-      );
-      
-      if (words.length > 0) {
-        const candidate = words[0];
-        if (isValidShopName(candidate)) {
-          return { value: candidate, confidence: "medium" };
-        }
-      }
-    }
-
-    // Strategy 3: Look near common text patterns
-    const text = document.body.innerText;
-    const patterns = [
-      /Shop:\s*([^\n]+)/i,
-      /Seller:\s*([^\n]+)/i,
-      /Store:\s*([^\n]+)/i,
-      /by\s+([A-Za-z0-9_\-\.]{3,})/i
-    ];
-
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
+    // Strategy 4: labelled text patterns (avoid "by Shopee" / "shipped by Shopee")
+    for (const pattern of [/^Shop:\s*(.+)$/im, /^Seller:\s*(.+)$/im, /^Store:\s*(.+)$/im]) {
+      const match = bodyText.match(pattern);
       if (match) {
         const candidate = cleanText(match[1]);
-        if (candidate && isValidShopName(candidate)) {
-          return { value: candidate, confidence: "medium" };
-        }
+        if (candidate && isValidShopName(candidate)) return { value: candidate, confidence: 'medium' };
       }
     }
 
-    return { value: null, confidence: "low" };
+    return { value: null, confidence: 'low' };
   }
 
   function extractProfileUrl() {
@@ -516,17 +516,15 @@ function showScanCard() {
 
   function isValidShopName(name) {
     if (!name || name.length < 2) return false;
-    
-    // Filter out common UI text
     const invalidNames = [
       'shop', 'seller', 'visit', 'profile', 'page', 'store',
       'home', 'back', 'next', 'prev', 'more', 'less', 'view',
-      'click', 'here', 'link', 'button', 'menu', 'nav', 'footer'
+      'click', 'here', 'link', 'button', 'menu', 'nav', 'footer',
+      'shopee', 'lazada', 'facebook', 'marketplace'  // platform names are not seller names
     ];
-    
-    return !invalidNames.includes(name.toLowerCase()) && 
-           !/^\d+$/.test(name) && // Not just numbers
-           name.length <= 50; // Reasonable length
+    return !invalidNames.includes(name.toLowerCase()) &&
+           !/^\d+$/.test(name) &&
+           name.length <= 80;
   }
 
   function extractProductImageCount() {
@@ -1038,6 +1036,137 @@ function showScanCard() {
   }
 
   // ===============================
+  // Product Specifications
+  // ===============================
+  function extractProductSpecifications() {
+    const norm = l => l.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    const specs = {};
+
+    // Strategy 1: DOM – locate the "Product Specifications" text node,
+    // then look for sibling containers holding label+value row pairs.
+    let heading = null;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (/^\s*Product\s+Specifications?\s*$/i.test(node.textContent)) {
+        heading = node.parentElement;
+        break;
+      }
+    }
+
+    if (heading) {
+      let container = heading;
+      for (let depth = 0; depth < 5; depth++) {
+        const parent = container.parentElement;
+        if (!parent) break;
+        for (const child of parent.children) {
+          if (child.contains(heading)) continue;
+          let found = 0;
+          for (const row of child.querySelectorAll('*')) {
+            if (row.children.length >= 2) {
+              const label = norm(row.children[0].textContent);
+              const value = norm(row.children[1].textContent);
+              if (label && value && label.length < 80 && !specs[label]) {
+                specs[label] = value;
+                found++;
+              }
+            }
+          }
+          if (found >= 2) return Object.keys(specs).length > 0 ? specs : null;
+        }
+        container = parent;
+      }
+    }
+
+    // Strategy 2: innerText parse between headings
+    const lines = document.body.innerText.split('\n').map(norm).filter(Boolean);
+    const startIdx = lines.findIndex(l => /^Product\s+Specifications?$/i.test(l));
+    if (startIdx === -1) return null;
+
+    const endPatterns = [
+      /^Product\s+Description$/i,
+      /^Ratings?\s*(&|and)?\s*Reviews?$/i,
+      /^Customer\s+Reviews?$/i,
+      /^You\s+May\s+Also\s+Like$/i,
+    ];
+
+    const specLines = [];
+    for (let i = startIdx + 1; i < lines.length; i++) {
+      if (endPatterns.some(p => p.test(lines[i]))) break;
+      specLines.push(lines[i]);
+    }
+
+    const tabCount = specLines.filter(l => l.includes('\t')).length;
+    if (tabCount > specLines.length / 2) {
+      // Table layout: "Label\tValue"
+      for (const line of specLines) {
+        const parts = line.split('\t');
+        if (parts.length >= 2) {
+          const label = parts[0].trim();
+          const value = parts.slice(1).join('\t').trim();
+          if (label && value && label.length < 80) specs[label] = value;
+        }
+      }
+    } else {
+      // Grid layout: alternating label / value lines
+      for (let i = 0; i < specLines.length - 1; i += 2) {
+        const label = specLines[i];
+        const value = specLines[i + 1];
+        if (label && value && label.length < 80 &&
+            !endPatterns.some(p => p.test(label)) &&
+            !endPatterns.some(p => p.test(value))) {
+          specs[label] = value;
+        }
+      }
+    }
+
+    return Object.keys(specs).length > 0 ? specs : null;
+  }
+
+  // ===============================
+  // Shopee Mall Detection
+  // ===============================
+  function extractIsShopeeMall() {
+    // Strategy 1: walk up 8 levels from the "Chat Now" button to find the
+    // seller card container, then scan ALL descendant elements of that container
+    // for a short text/alt/aria-label exactly matching "Shopee Mall".
+    const chatBtn = [...document.querySelectorAll('button, a')].find(
+      el => /^\s*chat\s+now\s*$/i.test(el.textContent)
+    );
+    if (chatBtn) {
+      let sellerSection = chatBtn;
+      for (let i = 0; i < 8 && sellerSection.parentElement && sellerSection.parentElement !== document.body; i++) {
+        sellerSection = sellerSection.parentElement;
+      }
+      for (const el of sellerSection.querySelectorAll('*')) {
+        // Text node content (leaf elements only to avoid false positives from large containers)
+        if (el.childElementCount === 0 && /^\s*shopee\s*mall\s*$/i.test(el.textContent)) return true;
+        // img alt
+        if (el.tagName === 'IMG' && /shopee\s*mall/i.test(el.getAttribute('alt') || '')) return true;
+        // aria-label
+        if (/shopee\s*mall/i.test(el.getAttribute('aria-label') || '')) return true;
+        // data attributes (Shopee sometimes uses data-* for badge labels)
+        if (/shopee\s*mall/i.test(el.getAttribute('data-label') || '')) return true;
+      }
+    }
+
+    // Strategy 2: any img on the page whose alt is exactly "Shopee Mall"
+    for (const img of document.querySelectorAll('img[alt]')) {
+      if (/^shopee\s*mall$/i.test(img.alt.trim())) return true;
+    }
+
+    // Strategy 3: any element whose aria-label contains "Shopee Mall"
+    for (const el of document.querySelectorAll('[aria-label*="all" i]')) {
+      if (/shopee\s*mall/i.test(el.getAttribute('aria-label'))) return true;
+    }
+
+    // Strategy 4: URL path
+    if (/\/mall\//i.test(location.href)) return true;
+
+    return false;
+  }
+
+  // ===============================
   // Product Description
   // ===============================
   function extractProductDescription() {
@@ -1127,6 +1256,47 @@ function showScanCard() {
   }
 
   // ===============================
+  // Data Validation & Quality Report
+  // ===============================
+  function sanitizeData(raw, platform) {
+    const d = { ...raw };
+    if (typeof d.product_name !== 'string' || !d.product_name.trim())
+      d.product_name = 'Unknown Product';
+    if (d.price !== null && d.price !== undefined &&
+        (typeof d.price !== 'number' || !isFinite(d.price) || d.price < 0))
+      d.price = null;
+    if (d.sold_count !== null && d.sold_count !== undefined)
+      d.sold_count = String(d.sold_count);
+    if (d.rating !== null && d.rating !== undefined &&
+        (typeof d.rating !== 'number' || d.rating < 0 || d.rating > 5))
+      d.rating = null;
+    d.image_count = (typeof d.image_count === 'number' && d.image_count >= 0)
+      ? Math.floor(d.image_count) : 0;
+    if ('is_shopee_mall' in d) d.is_shopee_mall = Boolean(d.is_shopee_mall);
+    if ('is_lazmall'     in d) d.is_lazmall     = Boolean(d.is_lazmall);
+    if ('reviews' in d && !Array.isArray(d.reviews)) d.reviews = [];
+    if (d.specifications !== null && d.specifications !== undefined) {
+      if (typeof d.specifications !== 'object' || Array.isArray(d.specifications) ||
+          Object.keys(d.specifications).length === 0) d.specifications = null;
+    }
+    if (d.seller_badges !== null && d.seller_badges !== undefined) {
+      if (!Array.isArray(d.seller_badges) || d.seller_badges.length === 0)
+        d.seller_badges = null;
+    }
+    const TRACKED = {
+      shopee:   ['price','sold_count','rating','rating_count','response_rate','shop_age','seller_name','description','image_count'],
+      lazada:   ['price','sold_count','rating','rating_count','seller_name','seller_rating','description','image_count'],
+      facebook: ['price','seller_name','condition','location','listing_date','description','image_count'],
+    };
+    const missing = (TRACKED[platform] || []).filter(f => {
+      const v = d[f];
+      return v === null || v === undefined || v === '' || (typeof v === 'number' && isNaN(v));
+    });
+    d.data_quality = { missing };
+    return d;
+  }
+
+  // ===============================
   // Main Extraction (FIXED - No Comments)
   // ===============================
   function extractShopeeData() {
@@ -1138,13 +1308,15 @@ function showScanCard() {
     const responseRate = extractResponseRate();
     const shopAge = extractShopAge();
     const sellerName = extractSellerName();
-    const profileUrl = extractProfileUrl();
     const imageCount = extractProductImageCount();
     const reviews = extractReviews(10);
     const description = extractProductDescription();
+    const specifications = extractProductSpecifications();
+    const is_shopee_mall = extractIsShopeeMall();
 
-    return {
+    return sanitizeData({
       success: true,
+      platform: 'shopee',
       product_name: cleanText(document.title) || "Unknown Product",
       price: price.value,
       sold_count: sold.value,
@@ -1153,12 +1325,13 @@ function showScanCard() {
       response_rate: responseRate.value,
       shop_age: shopAge.value,
       seller_name: sellerName.value,
-      profile_url: profileUrl.value,
       image_count: imageCount.value,
       description: description.value,
+      specifications: specifications,
+      is_shopee_mall: is_shopee_mall,
       reviews: reviews.value,
       extracted_at: new Date().toISOString()
-    };
+    }, 'shopee');
   }
 
   // ===============================

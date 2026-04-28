@@ -659,6 +659,47 @@
   }
 
   // ===============================
+  // Data Validation & Quality Report
+  // ===============================
+  function sanitizeData(raw, platform) {
+    const d = { ...raw };
+    if (typeof d.product_name !== 'string' || !d.product_name.trim())
+      d.product_name = 'Unknown Product';
+    if (d.price !== null && d.price !== undefined &&
+        (typeof d.price !== 'number' || !isFinite(d.price) || d.price < 0))
+      d.price = null;
+    if (d.sold_count !== null && d.sold_count !== undefined)
+      d.sold_count = String(d.sold_count);
+    if (d.rating !== null && d.rating !== undefined &&
+        (typeof d.rating !== 'number' || d.rating < 0 || d.rating > 5))
+      d.rating = null;
+    d.image_count = (typeof d.image_count === 'number' && d.image_count >= 0)
+      ? Math.floor(d.image_count) : 0;
+    if ('is_shopee_mall' in d) d.is_shopee_mall = Boolean(d.is_shopee_mall);
+    if ('is_lazmall'     in d) d.is_lazmall     = Boolean(d.is_lazmall);
+    if ('reviews' in d && !Array.isArray(d.reviews)) d.reviews = [];
+    if (d.specifications !== null && d.specifications !== undefined) {
+      if (typeof d.specifications !== 'object' || Array.isArray(d.specifications) ||
+          Object.keys(d.specifications).length === 0) d.specifications = null;
+    }
+    if (d.seller_badges !== null && d.seller_badges !== undefined) {
+      if (!Array.isArray(d.seller_badges) || d.seller_badges.length === 0)
+        d.seller_badges = null;
+    }
+    const TRACKED = {
+      shopee:   ['price','sold_count','rating','rating_count','response_rate','shop_age','seller_name','description','image_count'],
+      lazada:   ['price','sold_count','rating','rating_count','seller_name','seller_rating','description','image_count'],
+      facebook: ['price','seller_name','condition','location','listing_date','description','image_count'],
+    };
+    const missing = (TRACKED[platform] || []).filter(f => {
+      const v = d[f];
+      return v === null || v === undefined || v === '' || (typeof v === 'number' && isNaN(v));
+    });
+    d.data_quality = { missing };
+    return d;
+  }
+
+  // ===============================
   // Main Extraction
   // ===============================
   function extractFacebookData() {
@@ -684,14 +725,13 @@
         : "";
       const fullDescription = detailsPrefix + (description.value || "");
 
-      return {
+      return sanitizeData({
         success: true,
         platform: "facebook",
         product_name: productName.value,
         price: price.value,
         price_is_variant: price.variant || false,
         seller_name: sellerName.value,
-        profile_url: profileUrl.value,
         condition: condition.value,
         location: locationInfo.value,
         listing_date: listingDate.value,
@@ -705,7 +745,7 @@
         response_rate: null,
         listing_url: window.location.href,
         extracted_at: new Date().toISOString()
-      };
+      }, 'facebook');
     } catch (err) {
       console.error("extractFacebookData error:", err);
       return { success: false, error: err.message };

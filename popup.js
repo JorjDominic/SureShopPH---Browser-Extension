@@ -58,6 +58,7 @@ function showToast(message, type = "info", durationMs = 3500) {
 
 const output = document.getElementById("output");
 const scanBtn = document.getElementById("scanBtn");
+const commentOnlyBtn = document.getElementById("commentOnlyBtn");
 const activationSection = document.getElementById("activationSection");
 const scanSection = document.getElementById("scanSection");
 const activateBtn = document.getElementById("activateBtn");
@@ -68,7 +69,8 @@ const activationMessage = document.getElementById("activationMessage");
 let lastShopeeProductData = null;
 let lastLazadaProductData = null;
 let lastFacebookProductData = null;
-let progressiveState = "idle"; // "idle" | "scanning" | "stopped"
+let progressiveState     = "idle"; // controls commentsBtn (Deep Scan)
+let commentOnlyState     = "idle"; // controls commentOnlyBtn (Scan Comments)
 
 function showActivationMessage(text, isError = true) {
   activationMessage.textContent = text;
@@ -77,6 +79,18 @@ function showActivationMessage(text, isError = true) {
 
 // On popup open: decide which UI to show
 chrome.storage.local.get(["accessToken"], ({ accessToken }) => {
+  // Always clear previous scan results so the panel starts fresh each open
+  if (output) {
+    output.innerHTML = '';
+    output.style.padding = '';
+    output.style.textAlign = '';
+    output.style.fontFamily = '';
+  }
+  resetCommentsButton();
+  resetCommentOnlyButton();
+  progressiveState  = "idle";
+  commentOnlyState  = "idle";
+
   if (accessToken) {
     activationSection.style.display = "none";
     scanSection.style.display = "block";
@@ -105,6 +119,7 @@ function refreshPageStatus() {
       banner.innerHTML = `<i class="fas fa-info-circle"></i><span>Not a supported shopping site. Visit one of the platforms below to scan.</span>`;
       scanBtn && (scanBtn.disabled = true);
       commentsBtn && (commentsBtn.disabled = true);
+      commentOnlyBtn && (commentOnlyBtn.disabled = true);
       return;
     }
 
@@ -114,17 +129,20 @@ function refreshPageStatus() {
         banner.innerHTML = `<i class="fas fa-check-circle"></i><span><strong>${platform.label}</strong> product detected — ready to scan</span>`;
         scanBtn && (scanBtn.disabled = false);
         commentsBtn && (commentsBtn.disabled = false);
+        commentOnlyBtn && (commentOnlyBtn.disabled = false);
       } else {
         banner.className = "page-status page-status--neutral";
         banner.innerHTML = `<i class="fas fa-search"></i><span>${platform.label} detected — open a product page to scan</span>`;
         scanBtn && (scanBtn.disabled = true);
         commentsBtn && (commentsBtn.disabled = true);
+        commentOnlyBtn && (commentOnlyBtn.disabled = true);
       }
     } else {
       banner.className = "page-status page-status--supported";
       banner.innerHTML = `<i class="fas fa-globe"></i><span>${platform.label} — URL safety check active</span>`;
       scanBtn && (scanBtn.disabled = true);
       commentsBtn && (commentsBtn.disabled = true);
+      commentOnlyBtn && (commentOnlyBtn.disabled = true);
     }
   });
 }
@@ -133,7 +151,8 @@ function checkForAutoScanResults() {
   // Check if there are recent auto-scan results to display - ONLY PRODUCT SCANS
   chrome.storage.local.get("lastAutoScanResult", ({ lastAutoScanResult }) => {
     if (lastAutoScanResult && isRecentResult(lastAutoScanResult.timestamp)) {
-      console.log("Found recent auto-scan result:", lastAutoScanResult);
+      console.log("=== SCAN DATA SNAPSHOT: lastAutoScanResult from storage ===");
+      console.log(JSON.stringify(lastAutoScanResult, null, 2));
       
       // ONLY show PRODUCT scan results in the extension popup
       if (lastAutoScanResult.type === "product") {
@@ -405,28 +424,52 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   let dataRowsHTML = '';
   if (productData) {
     const esc = v => String(v).replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const row = (icon, label, value) => {
-      if (value === null || value === undefined || value === '') return '';
+    const row = (icon, label, value, required = false) => {
+      if (value === null || value === undefined || value === '') {
+        if (!required) return '';
+        return `<div class="cdata-row cdata-row--missing">
+          <span class="cdata-label"><i class="fas ${icon}"></i> ${label}</span>
+          <span class="cdata-value cdata-value--missing"><i class="fas fa-exclamation-circle"></i> Not found</span>
+        </div>`;
+      }
       return `<div class="cdata-row">
         <span class="cdata-label"><i class="fas ${icon}"></i> ${label}</span>
         <span class="cdata-value">${esc(value)}</span>
       </div>`;
     };
+    const platform = (productData.platform || '').toLowerCase();
+    const isSh = platform === 'shopee';
+    const isLa = platform === 'lazada';
+    const isFb = platform === 'facebook';
     const platformIcons = { shopee: 'fa-store', lazada: 'fa-tag', facebook: 'fa-facebook' };
-    const platformIcon = platformIcons[(productData.platform || '').toLowerCase()] || 'fa-store';
+    const platformIcon = platformIcons[platform] || 'fa-store';
+    const priceDisplay = productData.price !== null && productData.price !== undefined
+      ? `₱${Number(productData.price).toLocaleString()}`
+      : productData.price_is_variant
+      ? 'Select a variant on the listing to determine price'
+      : null;
+    const ratingDisplay = productData.rating !== null && productData.rating !== undefined
+      ? `${productData.rating} / 5 (${productData.rating_count !== null && productData.rating_count !== undefined ? productData.rating_count : 0} reviews)`
+      : null;
     dataRowsHTML = [
-      row(platformIcon,       'Platform', productData.platform),
-      row('fa-box-open',      'Product',  productData.product_name),
-      row('fa-tag',           'Price',    productData.price !== null && productData.price !== undefined
-          ? `₱${Number(productData.price).toLocaleString()}`
-          : productData.price_is_variant
-          ? 'Select a variant on the listing to determine price'
-          : null),
-      row('fa-user-tie',      'Seller',   productData.seller_name),
-      row('fa-certificate',   'Badges',   Array.isArray(productData.seller_badges) && productData.seller_badges.length > 0
-          ? productData.seller_badges.join(' · ')
-          : null),
-      row('fa-star',          'Rating',   productData.rating !== null && productData.rating !== undefined ? `${productData.rating} / 5 (${productData.rating_count || 0} reviews)` : null),
+      row(platformIcon,          'Platform',      productData.platform),
+      row('fa-link',             'URL',           productData.url),
+      row('fa-box-open',         'Product',       productData.product_name,    true),
+      row('fa-tag',              'Price',         priceDisplay,                true),
+      row('fa-fire',             'Sold',          productData.sold_count !== null && productData.sold_count !== undefined ? String(productData.sold_count) : null, isSh || isLa),
+      row('fa-user-tie',         'Seller',        productData.seller_name,     true),
+      row('fa-certificate',      'Badges',        Array.isArray(productData.seller_badges) && productData.seller_badges.length > 0 ? productData.seller_badges.join(' · ') : null),
+      row('fa-store',            'Mall',          productData.is_shopee_mall ? 'Shopee Mall' : productData.is_lazmall ? 'LazMall' : null),
+      row('fa-star',             'Rating',        ratingDisplay,               isSh || isLa),
+      row('fa-comments',         'Response Rate', productData.response_rate !== null && productData.response_rate !== undefined ? `${productData.response_rate}%` : null, isSh),
+      row('fa-calendar-alt',     'Shop Age',      productData.shop_age,        isSh),
+      row('fa-medal',            'Seller Rating', productData.seller_rating !== null && productData.seller_rating !== undefined ? String(productData.seller_rating) : null, isLa),
+      row('fa-images',           'Images',        productData.image_count !== null && productData.image_count !== undefined ? String(productData.image_count) : null, true),
+      // Facebook-specific
+      row('fa-info-circle',      'Condition',     productData.condition,       isFb),
+      row('fa-map-marker-alt',   'Location',      productData.location,        isFb),
+      row('fa-calendar',         'Listed',        productData.listing_date,    isFb),
+      row('fa-clock',            'Extracted At',  productData.extracted_at),
     ].filter(Boolean).join('');
   }
 
@@ -438,13 +481,26 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       </div>`
     : '';
 
+  // Product specifications sub-block
+  const specsData = productData?.specifications;
+  const specsInPanelHTML = specsData && typeof specsData === 'object' && Object.keys(specsData).length > 0
+    ? `<div class="cdata-desc-block">
+        <div class="cdata-desc-label"><i class="fas fa-list-ul"></i> Product Specifications</div>
+        <table class="cdata-specs-table">
+          ${Object.entries(specsData).map(([k, v]) =>
+            `<tr><td class="cdata-specs-key">${k.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</td><td class="cdata-specs-val">${String(v).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</td></tr>`
+          ).join('')}
+        </table>
+      </div>`
+    : '';
+
   // Comments placeholder — actual reviews appended by appendReviewsToOutput
   const commentsPlaceholderHTML = `<div class="cdata-comments-placeholder" id="cdata-comments-slot">
     <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments</div>
     <div class="cdata-comments-hint">Run <strong>Deep Scan</strong> to collect comments.</div>
   </div>`;
 
-  const panelBodyHTML = dataRowsHTML + descInPanelHTML + commentsPlaceholderHTML;
+  const panelBodyHTML = dataRowsHTML + specsInPanelHTML + descInPanelHTML + commentsPlaceholderHTML;
 
   const collectedDataHTML = `<div class="cdata-section">
       <div class="cdata-header">
@@ -661,6 +717,11 @@ function performScan(isAutomatic = false, withReviews = false) {
           // Lazada-specific
           seller_rating: response.seller_rating,
           seller_badges: response.seller_badges || null,
+          is_lazmall: response.is_lazmall || false,
+          // Shopee Mall
+          is_shopee_mall: response.is_shopee_mall || false,
+          // Product specifications (Shopee & Lazada)
+          specifications: response.specifications || null,
           // Facebook-specific
           condition: response.condition,
           location: response.location,
@@ -668,9 +729,9 @@ function performScan(isAutomatic = false, withReviews = false) {
           listing_url: response.listing_url || currentTab.url,
           // Common
           seller_name: response.seller_name,
-          profile_url: response.profile_url,
           image_count: response.image_count,
-          description: response.description || null
+          description: response.description || null,
+          data_quality: response.data_quality || null,
         };
 
         // Cache for progressive restart
@@ -678,7 +739,8 @@ function performScan(isAutomatic = false, withReviews = false) {
         if (currentTab.url.includes("lazada.com.ph")) lastLazadaProductData = productData;
         if (currentTab.url.includes("facebook.com")) lastFacebookProductData = productData;
 
-        console.log("Product data to send to scan.php:", productData);
+        console.log("=== SCAN DATA SNAPSHOT: productData sent to scan.php ===");
+        console.log(JSON.stringify(productData, null, 2));
 
         const scanResponse = await fetch(
           `${SURESHOP_API_BASE}/scan.php`,
@@ -699,7 +761,8 @@ function performScan(isAutomatic = false, withReviews = false) {
         }
 
         const result = await scanResponse.json();
-        console.log("Scan result:", result);
+        console.log("=== SCAN DATA SNAPSHOT: API response from scan.php ===");
+        console.log(JSON.stringify(result, null, 2));
 
         if (result.risk_score !== undefined && result.risk_level !== undefined) {
           // Store result for later retrieval
@@ -739,9 +802,9 @@ function performScan(isAutomatic = false, withReviews = false) {
                 currentTab.id,
                 { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
                 () => {
-                  setCommentsButtonState("scanning");
-                  // Small delay to let initial harvest complete, then show
-                  setTimeout(() => {
+          setCommentsButtonState("scanning");
+        // Small delay to let initial harvest complete, then show
+        setTimeout(() => {
                     chrome.tabs.sendMessage(
                       currentTab.id,
                       { type: "GET_PROGRESSIVE_REVIEWS" },
@@ -841,6 +904,14 @@ async function rescanWithReviews(productData, reviews, platformKey) {
 // the Shopee content script finishes re-analyzing a new review page.
 // -----------------------------------------------------------------------
 chrome.runtime.onMessage.addListener((message) => {
+  // Helper: update whichever button(s) are currently in scanning/stopped state
+  function setActiveCollectionState(state) {
+    if (progressiveState  !== "idle") setCommentsButtonState(state);
+    if (commentOnlyState  !== "idle") setCommentOnlyButtonState(state);
+    // If neither was active (e.g. restarted from page overlay), default to Deep Scan
+    if (progressiveState === "idle" && commentOnlyState === "idle") setCommentsButtonState(state);
+  }
+
   if (message.type === "SHOPEE_SCAN_UPDATED") {
     console.log("[Popup] Progressive update:", message.risk_score, message.risk_level);
     showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null, lastShopeeProductData);
@@ -850,7 +921,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_STOPPED") {
-    setCommentsButtonState("stopped");
+    setActiveCollectionState("stopped");
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, false);
     }
@@ -860,7 +931,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_RESTARTED") {
-    setCommentsButtonState("scanning");
+    setActiveCollectionState("scanning");
   }
 
   // Direct reviews from content script — display immediately then re-scan
@@ -882,7 +953,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "FACEBOOK_PROGRESSIVE_STOPPED") {
-    setCommentsButtonState("stopped");
+    setActiveCollectionState("stopped");
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, false);
     }
@@ -897,7 +968,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "LAZADA_PROGRESSIVE_STOPPED") {
-    setCommentsButtonState("stopped");
+    setActiveCollectionState("stopped");
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, true);
     }
@@ -907,13 +978,109 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "LAZADA_PROGRESSIVE_RESTARTED") {
-    setCommentsButtonState("scanning");
+    setActiveCollectionState("scanning");
   }
 });
 
 // Normal scan
 scanBtn.addEventListener("click", () => {
   performScan(false, false);
+});
+
+// Comment-only scan — starts progressive collection without requiring a prior product scan.
+// If product data was already cached from a Normal Scan it is reused (so risk score also updates);
+// otherwise collection still runs — only the risk re-scan is skipped.
+function performCommentOnlyScan() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (!tabs[0]) return;
+    const url = tabs[0].url;
+    const isShopee   = url.includes("shopee.ph");
+    const isLazada   = url.includes("lazada.com.ph");
+    const isFacebook = url.includes("facebook.com") && /\/marketplace\/item\/\d+/.test(url);
+
+    if (!isShopee && !isLazada && !isFacebook) {
+      showToast("Open a Shopee, Lazada, or FB Marketplace product page to scan comments.", "warning", 4500);
+      return;
+    }
+
+    const contentScript = isShopee ? "content.js"
+                        : isLazada ? "content_lazada.js"
+                        : "content_facebook.js";
+
+    // Use cached product data if available so the risk score also updates;
+    // passing null is fine — collection still works, API re-scan is simply skipped.
+    const scanData = isShopee   ? lastShopeeProductData
+                   : isLazada   ? lastLazadaProductData
+                   : isFacebook ? lastFacebookProductData
+                   : null;
+
+    commentOnlyBtn.innerHTML = '<i class="fas fa-sync spinning"></i> Starting...';
+    commentOnlyBtn.disabled = true;
+
+    function doStart() {
+      chrome.tabs.sendMessage(
+        tabs[0].id,
+        { type: "START_PROGRESSIVE_COLLECTION", scanData },
+        () => {
+          if (chrome.runtime.lastError) {
+            showToast("Unable to start comment scan. Please refresh and try again.", "error");
+            setCommentOnlyButtonState("idle");
+            return;
+          }
+          setCommentOnlyButtonState("scanning");
+          setTimeout(() => {
+            chrome.tabs.sendMessage(
+              tabs[0].id,
+              { type: "GET_PROGRESSIVE_REVIEWS" },
+              (r) => appendReviewsToOutput(r?.reviews || [], isLazada)
+            );
+          }, isLazada ? 600 : 400);
+        }
+      );
+    }
+
+    // Try sending directly; if the content script isn't running, inject it first
+    chrome.tabs.sendMessage(tabs[0].id, { type: "PING" }, () => {
+      if (chrome.runtime.lastError) {
+        chrome.scripting.executeScript(
+          { target: { tabId: tabs[0].id }, files: [contentScript] },
+          () => {
+            if (chrome.runtime.lastError) {
+              showToast("Unable to access this page. Please refresh and try again.", "error");
+              setCommentOnlyButtonState("idle");
+              return;
+            }
+            setTimeout(doStart, 300);
+          }
+        );
+      } else {
+        doStart();
+      }
+    });
+  });
+}
+
+commentOnlyBtn.addEventListener("click", () => {
+  if (commentOnlyState === "scanning") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "STOP_PROGRESSIVE_COLLECTION" });
+    });
+    return;
+  }
+  if (commentOnlyState === "stopped") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        const restartType = tabs[0].url.includes("lazada.com.ph")
+          ? "LAZADA_RESTART_COLLECTION"
+          : tabs[0].url.includes("facebook.com")
+          ? "FACEBOOK_RESTART_COLLECTION"
+          : "SHOPEE_RESTART_COLLECTION";
+        chrome.tabs.sendMessage(tabs[0].id, { type: restartType });
+      }
+    });
+    return;
+  }
+  performCommentOnlyScan();
 });
 
 // Deep Scan / Stop / Restart — state machine on commentsBtn
@@ -940,6 +1107,30 @@ function setCommentsButtonState(state) {
     commentsBtn.style.borderColor = '';
     commentsBtn.disabled = false;
     progressiveState = "idle";
+  }
+}
+
+function setCommentOnlyButtonState(state) {
+  commentOnlyState = state;
+  if (state === "scanning") {
+    commentOnlyBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Collecting';
+    commentOnlyBtn.style.background = '#e74c3c';
+    commentOnlyBtn.style.color = '#fff';
+    commentOnlyBtn.style.borderColor = '#e74c3c';
+    commentOnlyBtn.disabled = false;
+  } else if (state === "stopped") {
+    commentOnlyBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Collection';
+    commentOnlyBtn.style.background = '#1b9c85';
+    commentOnlyBtn.style.color = '#fff';
+    commentOnlyBtn.style.borderColor = '#1b9c85';
+    commentOnlyBtn.disabled = false;
+  } else {
+    commentOnlyBtn.innerHTML = '<i class="fas fa-comments"></i> Scan Comments';
+    commentOnlyBtn.style.background = '';
+    commentOnlyBtn.style.color = '';
+    commentOnlyBtn.style.borderColor = '';
+    commentOnlyBtn.disabled = false;
+    commentOnlyState = "idle";
   }
 }
 
@@ -1101,10 +1292,14 @@ function resetCommentsButton() {
   setCommentsButtonState("idle");
 }
 
+function resetCommentOnlyButton() {
+  setCommentOnlyButtonState("idle");
+}
+
 function resetButton() {
   scanBtn.innerHTML = '<i class="fas fa-shield-alt"></i> Normal Scan';
   scanBtn.disabled = false;
-  // Only reset commentsBtn if progressive collection hasn\'t started
+  // Only reset commentsBtn if progressive collection hasn't started
   if (progressiveState === "idle") {
     resetCommentsButton();
   }

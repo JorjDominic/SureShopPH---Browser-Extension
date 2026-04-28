@@ -25,9 +25,9 @@
 button, input, textarea, select { font-family: "Poppins", sans-serif; }
 
 html, body {
-    width: 380px;
-    min-width: 380px;
-    max-width: 380px;
+    width: 100%;
+    min-width: 320px;
+    max-width: 100%;
     margin: 0;
     padding: 0;
     overflow-x: hidden;
@@ -239,6 +239,36 @@ html, body {
 #commentsBtn:disabled {
     color: var(--color-info-dark);
     border-color: rgba(27, 156, 133, 0.3);
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+#commentOnlyBtn {
+    width: 100%;
+    background: var(--color-white);
+    color: var(--color-info-dark);
+    border: 2px solid rgba(132, 139, 200, 0.45);
+    border-radius: var(--border-radius-2);
+    padding: 0.45rem 1rem;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+#commentOnlyBtn:hover {
+    background: rgba(132, 139, 200, 0.08);
+    border-color: var(--color-info-dark);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(132, 139, 200, 0.2);
+}
+#commentOnlyBtn:active { transform: translateY(0); }
+#commentOnlyBtn:disabled {
+    color: rgba(132, 139, 200, 0.4);
+    border-color: rgba(132, 139, 200, 0.2);
     cursor: not-allowed;
     transform: none;
     box-shadow: none;
@@ -939,6 +969,17 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 .cdata-row:last-child { border-bottom: none; }
 .cdata-row:nth-child(even) { background: rgba(27, 156, 133, 0.03); }
+.cdata-row--missing { opacity: 0.65; }
+.cdata-value--missing {
+    color: var(--color-medium);
+    font-style: italic;
+    font-size: 10.5px;
+}
+.cdata-value--missing i {
+    color: var(--color-danger, #e74c3c);
+    margin-right: 3px;
+    font-size: 9px;
+}
 
 .cdata-label {
     display: flex;
@@ -999,6 +1040,29 @@ input:checked + .slider:before { transform: translateX(20px); }
 }
 .cdata-desc-text::-webkit-scrollbar { width: 4px; }
 .cdata-desc-text::-webkit-scrollbar-thumb { background: rgba(27,156,133,0.3); border-radius: 2px; }
+
+/* Product specifications table inside the panel */
+.cdata-specs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+.cdata-specs-table tr {
+    border-bottom: 1px solid rgba(132, 139, 200, 0.1);
+}
+.cdata-specs-table tr:last-child { border-bottom: none; }
+.cdata-specs-key {
+    color: var(--color-info-dark);
+    font-weight: 500;
+    padding: 3px 8px 3px 0;
+    width: 45%;
+    vertical-align: top;
+}
+.cdata-specs-val {
+    color: var(--color-dark);
+    padding: 3px 0;
+    word-break: break-word;
+}
 
 /* Comments slot/placeholder inside the panel */
 .cdata-comments-placeholder,

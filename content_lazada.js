@@ -334,6 +334,14 @@
   }
 
   function extractRatings() {
+    // No ratings yet — treat as 0 / 0
+    const bodyInnerText = document.body.innerText;
+    if (/no\s+ratings?\s+yet/i.test(bodyInnerText) || /be\s+the\s+first\s+to\s+review/i.test(bodyInnerText)) {
+      return {
+        rating:       { value: 0, confidence: "high" },
+        rating_count: { value: 0, confidence: "high" }
+      };
+    }
     const ratingSelectors = [
       ".score-average",
       '[class*="rating-average"]',
@@ -497,7 +505,7 @@
       badges.push(clean);
     };
 
-    // Strategy 1: badge/tag elements near the seller info block
+    // Strategy 1: badge/tag DOM elements (class-name selectors)
     const badgeSelectors = [
       '[class*="seller-tag"]',
       '[class*="seller-badge"]',
@@ -509,10 +517,17 @@
       '[class*="lazmall"]',
       '[class*="flagship"]',
       '[class*="mall-tag"]',
+      '[class*="verified"]',
       '[class*="seller-info"] [class*="tag"]',
       '[class*="seller-info"] [class*="badge"]',
       '[class*="pdp-seller"] [class*="tag"]',
       '[class*="pdp-seller"] [class*="badge"]',
+      '[class*="shop-info"] [class*="tag"]',
+      '[class*="shop-info"] [class*="badge"]',
+      '[class*="store-info"] [class*="tag"]',
+      '[class*="store-info"] [class*="badge"]',
+      '[data-spm*="badge"]',
+      '[data-spm*="tag"]',
     ];
     for (const sel of badgeSelectors) {
       document.querySelectorAll(sel).forEach(el => {
@@ -521,38 +536,54 @@
       });
     }
 
-    // Strategy 2: images with alt text for known badges (LazMall icon, etc.)
+    // Strategy 2: img alt text for known badge icons
     document.querySelectorAll('img[alt]').forEach(img => {
       const alt = (img.alt || "").trim();
-      if (/lazmall|flagship|preferred\s*seller|top\s*seller/i.test(alt) && alt.length < 60) {
+      if (/lazmall|flagship|preferred\s*seller|top\s*seller|official\s*store|verified/i.test(alt) && alt.length < 60) {
         addBadge(alt);
       }
     });
 
-    // Strategy 3: scan innerText near the seller name for known badge keywords
+    // Strategy 3: aria-label attributes containing badge keywords
+    document.querySelectorAll('[aria-label]').forEach(el => {
+      const label = (el.getAttribute('aria-label') || '').trim();
+      if (/lazmall|flagship|preferred\s*seller|official\s*store|verified|top\s*seller/i.test(label) && label.length < 80) {
+        addBadge(label);
+      }
+    });
+
+    // Strategy 4: scan innerText near the seller section for known badge keywords
     const bodyText = document.body.innerText;
     const knownBadges = [
       "LazMall", "Flagship Store", "Preferred Seller",
-      "New Arrival", "Top Seller", "Official Store"
+      "New Arrival", "Top Seller", "Official Store", "Verified Seller"
     ];
-    // Find the "Seller Ratings" block as an anchor, look ±400 chars around it
+    // Use "Seller Ratings" as anchor; fall back to first 3000 chars
     const anchorIdx = bodyText.search(/Seller\s+Ratings?/i);
     const searchZone = anchorIdx !== -1
-      ? bodyText.slice(Math.max(0, anchorIdx - 400), anchorIdx + 400)
-      : bodyText.slice(0, 2000);
+      ? bodyText.slice(Math.max(0, anchorIdx - 600), anchorIdx + 600)
+      : bodyText.slice(0, 3000);
     for (const badge of knownBadges) {
       if (new RegExp(badge.replace(/\s+/g, "\\s+"), "i").test(searchZone)) {
         addBadge(badge);
       }
     }
 
-    // Strategy 4: year badge — "X-Year Store" pattern
+    // Strategy 5: X-Year Store pattern
     const yearMatch = bodyText.match(/(\d+)-Year\s+Store/i);
     if (yearMatch) addBadge(yearMatch[0]);
 
-    // Strategy 5: top seller category — "Top1 Seller for Desktop Computers"
+    // Strategy 6: Top-N Seller for [category]
     const topSellerMatch = bodyText.match(/Top\d+\s+Seller\s+for\s+[^\n]{2,50}/i);
     if (topSellerMatch) addBadge(topSellerMatch[0].trim());
+
+    // Strategy 7: chat response rate (e.g. "100% Chat Response Rate")
+    const chatRateMatch = bodyText.match(/(\d+)%\s+Chat\s+Response\s+Rate/i);
+    if (chatRateMatch) addBadge(chatRateMatch[0].trim());
+
+    // Strategy 8: ship-on-time rate  (e.g. "98% Ships on Time")
+    const shipMatch = bodyText.match(/(\d+)%\s+Ships?\s+on\s+Time/i);
+    if (shipMatch) addBadge(shipMatch[0].trim());
 
     return { value: badges.length > 0 ? badges : null, confidence: badges.length > 0 ? "high" : "low" };
   }
@@ -562,6 +593,120 @@
       'img[src*="lazada"], img[data-src*="lazada"], [class*="gallery"] img'
     );
     return { value: images.length, confidence: "medium" };
+  }
+
+  // ===============================
+  // Product Specifications
+  // ===============================
+  function extractProductSpecifications() {
+    const norm = l => l.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    const specs = {};
+
+    // Strategy 1: DOM – locate the "Product Specifications" text node,
+    // then look for sibling containers holding label+value row pairs.
+    let heading = null;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (/^\s*Product\s+Specifications?\s*$/i.test(node.textContent)) {
+        heading = node.parentElement;
+        break;
+      }
+    }
+
+    if (heading) {
+      let container = heading;
+      for (let depth = 0; depth < 5; depth++) {
+        const parent = container.parentElement;
+        if (!parent) break;
+        for (const child of parent.children) {
+          if (child.contains(heading)) continue;
+          let found = 0;
+          for (const row of child.querySelectorAll('*')) {
+            if (row.children.length >= 2) {
+              const label = norm(row.children[0].textContent);
+              const value = norm(row.children[1].textContent);
+              if (label && value && label.length < 80 && !specs[label]) {
+                specs[label] = value;
+                found++;
+              }
+            }
+          }
+          if (found >= 2) return Object.keys(specs).length > 0 ? specs : null;
+        }
+        container = parent;
+      }
+    }
+
+    // Strategy 2: innerText parse between headings
+    const lines = document.body.innerText.split('\n').map(norm).filter(Boolean);
+    const startIdx = lines.findIndex(l => /^Product\s+Specifications?$/i.test(l));
+    if (startIdx === -1) return null;
+
+    const endPatterns = [
+      /^Product\s+(Description|Details?)$/i,
+      /^Ratings?\s*(&|and)?\s*Reviews?$/i,
+      /^Customer\s+Reviews?$/i,
+      /^You\s+May\s+Also\s+Like$/i,
+    ];
+
+    const specLines = [];
+    for (let i = startIdx + 1; i < lines.length; i++) {
+      if (endPatterns.some(p => p.test(lines[i]))) break;
+      specLines.push(lines[i]);
+    }
+
+    const tabCount = specLines.filter(l => l.includes('\t')).length;
+    if (tabCount > specLines.length / 2) {
+      // Table layout: "Label\tValue"
+      for (const line of specLines) {
+        const parts = line.split('\t');
+        if (parts.length >= 2) {
+          const label = parts[0].trim();
+          const value = parts.slice(1).join('\t').trim();
+          if (label && value && label.length < 80) specs[label] = value;
+        }
+      }
+    } else {
+      // Grid layout: alternating label / value lines
+      for (let i = 0; i < specLines.length - 1; i += 2) {
+        const label = specLines[i];
+        const value = specLines[i + 1];
+        if (label && value && label.length < 80 &&
+            !endPatterns.some(p => p.test(label)) &&
+            !endPatterns.some(p => p.test(value))) {
+          specs[label] = value;
+        }
+      }
+    }
+
+    return Object.keys(specs).length > 0 ? specs : null;
+  }
+
+  // ===============================
+  // LazMall Detection
+  // ===============================
+  function extractIsLazMall(badges) {
+    // Strategy 1: already found in seller badges
+    if (badges && badges.some(b => /lazmall/i.test(b))) return true;
+
+    // Strategy 2: DOM elements with lazmall class
+    if (document.querySelector('[class*="lazmall"], [class*="LazMall"]')) return true;
+
+    // Strategy 3: images with lazmall alt text
+    for (const img of document.querySelectorAll('img[alt]')) {
+      if (/lazmall/i.test(img.alt)) return true;
+    }
+
+    // Strategy 4: body text near the seller/store section
+    const bodyText = document.body.innerText;
+    const anchorIdx = bodyText.search(/Seller\s+Ratings?|Store\s+Rating/i);
+    const zone = anchorIdx !== -1
+      ? bodyText.slice(Math.max(0, anchorIdx - 500), anchorIdx + 500)
+      : bodyText.slice(0, 3000);
+    if (/lazmall/i.test(zone)) return true;
+
+    return false;
   }
 
   function extractProductDescription() {
@@ -1046,6 +1191,47 @@
   }
 
   // ===============================
+  // Data Validation & Quality Report
+  // ===============================
+  function sanitizeData(raw, platform) {
+    const d = { ...raw };
+    if (typeof d.product_name !== 'string' || !d.product_name.trim())
+      d.product_name = 'Unknown Product';
+    if (d.price !== null && d.price !== undefined &&
+        (typeof d.price !== 'number' || !isFinite(d.price) || d.price < 0))
+      d.price = null;
+    if (d.sold_count !== null && d.sold_count !== undefined)
+      d.sold_count = String(d.sold_count);
+    if (d.rating !== null && d.rating !== undefined &&
+        (typeof d.rating !== 'number' || d.rating < 0 || d.rating > 5))
+      d.rating = null;
+    d.image_count = (typeof d.image_count === 'number' && d.image_count >= 0)
+      ? Math.floor(d.image_count) : 0;
+    if ('is_shopee_mall' in d) d.is_shopee_mall = Boolean(d.is_shopee_mall);
+    if ('is_lazmall'     in d) d.is_lazmall     = Boolean(d.is_lazmall);
+    if ('reviews' in d && !Array.isArray(d.reviews)) d.reviews = [];
+    if (d.specifications !== null && d.specifications !== undefined) {
+      if (typeof d.specifications !== 'object' || Array.isArray(d.specifications) ||
+          Object.keys(d.specifications).length === 0) d.specifications = null;
+    }
+    if (d.seller_badges !== null && d.seller_badges !== undefined) {
+      if (!Array.isArray(d.seller_badges) || d.seller_badges.length === 0)
+        d.seller_badges = null;
+    }
+    const TRACKED = {
+      shopee:   ['price','sold_count','rating','rating_count','response_rate','shop_age','seller_name','description','image_count'],
+      lazada:   ['price','sold_count','rating','rating_count','seller_name','seller_rating','description','image_count'],
+      facebook: ['price','seller_name','condition','location','listing_date','description','image_count'],
+    };
+    const missing = (TRACKED[platform] || []).filter(f => {
+      const v = d[f];
+      return v === null || v === undefined || v === '' || (typeof v === 'number' && isNaN(v));
+    });
+    d.data_quality = { missing };
+    return d;
+  }
+
+  // ===============================
   // Main Extraction
   // ===============================
   function extractLazadaData() {
@@ -1055,13 +1241,14 @@
     const sold = extractSoldCount();
     const ratings = extractRatings();
     const sellerName = extractSellerName();
-    const profileUrl = extractProfileUrl();
     const sellerRating = extractSellerRating();
     const sellerBadges = extractSellerBadges();
     const imageCount = extractProductImageCount();
     const description = extractProductDescription();
+    const specifications = extractProductSpecifications();
+    const is_lazmall = extractIsLazMall(sellerBadges.value);
 
-    return {
+    return sanitizeData({
       success: true,
       platform: "lazada",
       product_name: cleanText(document.title)
@@ -1072,14 +1259,15 @@
       rating: ratings.rating.value,
       rating_count: ratings.rating_count.value,
       seller_name: sellerName.value,
-      profile_url: profileUrl.value,
       seller_rating: sellerRating.value,
       seller_badges: sellerBadges.value,
       image_count: imageCount.value,
       description: description.value,
       description_image_count: description.image_count || 0,
+      specifications: specifications,
+      is_lazmall: is_lazmall,
       extracted_at: new Date().toISOString()
-    };
+    }, 'lazada');
   }
 
   // ===============================
