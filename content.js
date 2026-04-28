@@ -4,7 +4,10 @@
   // ===============================
   if (!location.hostname.includes("shopee.")) return;
 
-  console.log("ScamGuard content.js loaded (Shopee)");
+  const DEBUG = false;
+  const dbg = (...a) => { if (DEBUG) console.log(...a); };
+  const dbgErr = (...a) => { if (DEBUG) console.error(...a); };
+  dbg("ScamGuard content.js loaded (Shopee)");
 
   // ===============================
   // API Base (mirrors popup.js)
@@ -248,7 +251,7 @@ function showScanCard() {
   function checkAndShowCard() {
     const isProductPage = /-i\.\d+\.\d+/.test(location.href);
     if (isProductPage) {
-      console.log("Product page detected, showing scan card");
+      dbg("Product page detected, showing scan card");
       showScanCard();
     }
   }
@@ -284,7 +287,7 @@ function showScanCard() {
 
   setInterval(() => {
     if (location.href !== lastUrl) {
-      console.log("URL changed (SPA):", lastUrl, "→", location.href);
+      dbg("URL changed (SPA):", lastUrl, "→", location.href);
       lastUrl = location.href;
       dataStale = true;
       // Reset progressive collection — new product page, fresh slate (no stopped card)
@@ -906,7 +909,7 @@ function showScanCard() {
       }).catch(() => { /* popup may not be open */ });
 
     } catch (e) {
-      console.warn("[SureShop] Progressive scan update failed:", e.message);
+      dbgErr("[SureShop] Progressive scan update failed:", e.message);
     }
   }
 
@@ -931,7 +934,7 @@ function showScanCard() {
       const newOnes = harvestNewReviews();
       if (newOnes.length > 0) {
         progressiveReviews.push(...newOnes);
-        console.log(
+        dbg(
           `[SureShop] Progressive: +${newOnes.length} reviews (total: ${progressiveReviews.length})`
         );
         sendProgressiveUpdate();
@@ -959,7 +962,7 @@ function showScanCard() {
       [...document.querySelectorAll("[data-cmtid]")]
         .map(el => el.getAttribute("data-cmtid"))
     );
-    console.log(`[SureShop] Progressive collection started. Initial reviews: ${progressiveReviews.length}`);
+    dbg(`[SureShop] Progressive collection started. Initial reviews: ${progressiveReviews.length}`);
 
     // Always observe body — pagination controls live outside the ratings section
     reviewMutationObserver = new MutationObserver(onReviewDomChange);
@@ -1300,7 +1303,7 @@ function showScanCard() {
   // Main Extraction (FIXED - No Comments)
   // ===============================
   function extractShopeeData() {
-    console.log("Extracting Shopee data...");
+    dbg("Extracting Shopee data...");
     
     const price = extractMainPrice();
     const sold = extractSoldCount();
@@ -1338,20 +1341,20 @@ function showScanCard() {
   // Messaging - FIXED TO HANDLE EXTRACT_DATA
   // ===============================
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log("Content script received message:", message.type);
+    dbg("Content script received message:", message.type);
     
     if (message.type === "EXTRACT_DATA") {
-      console.log("Handling EXTRACT_DATA message");
+      dbg("Handling EXTRACT_DATA message");
       const data = extractShopeeData();
-      console.log("Extracted data:", data);
+      dbg("Extracted data:", data);
       sendResponse(data);
       return true;
     }
 
     if (message.type === "EXTRACT_REVIEWS") {
-      console.log("Handling EXTRACT_REVIEWS message");
+      dbg("Handling EXTRACT_REVIEWS message");
       const reviews = extractReviews(10);
-      console.log("Extracted reviews:", reviews);
+      dbg("Extracted reviews:", reviews);
       sendResponse({ reviews: reviews.value });
       return true;
     }
@@ -1397,7 +1400,7 @@ function showScanCard() {
       return true;
     }
 
-    console.log("Unknown message type:", message.type);
+    dbg("Unknown message type:", message.type);
     return false;
   });
 })();

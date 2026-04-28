@@ -7,7 +7,10 @@
   // Detect iframe context — if we're inside a sub-frame, run only review extraction
   const IS_IFRAME = window !== window.top;
 
-  console.log("ScamGuard content_lazada.js loaded (Lazada)", IS_IFRAME ? "[iframe]" : "[main]");
+  const DEBUG = false;
+  const dbg = (...a) => { if (DEBUG) console.log(...a); };
+  const dbgErr = (...a) => { if (DEBUG) console.error(...a); };
+  dbg("ScamGuard content_lazada.js loaded (Lazada)", IS_IFRAME ? "[iframe]" : "[main]");
 
   // ===============================
   // API Base (mirrors popup.js)
@@ -1235,7 +1238,7 @@
   // Main Extraction
   // ===============================
   function extractLazadaData() {
-    console.log("Extracting Lazada data...");
+    dbg("Extracting Lazada data...");
 
     const price = extractMainPrice();
     const sold = extractSoldCount();
@@ -1283,7 +1286,7 @@
             type: "LAZADA_REVIEWS_DIRECT",
             reviews: r.value
           }).catch(() => {});
-          console.log("[SureShop iframe] Sent", r.value.length, "reviews from iframe");
+          dbg("[SureShop iframe] Sent", r.value.length, "reviews from iframe");
         }
       } catch (_) {}
     };
@@ -1301,7 +1304,7 @@
   // ===============================
   function checkAndShowCard() {
     if (isProductPage()) {
-      console.log("Lazada product page detected, showing scan card");
+      dbg("Lazada product page detected, showing scan card");
       showScanCard();
     }
   }
@@ -1334,7 +1337,7 @@
 
   setInterval(() => {
     if (location.href !== lastUrl) {
-      console.log("Lazada URL changed (SPA):", lastUrl, "→", location.href);
+      dbg("Lazada URL changed (SPA):", lastUrl, "→", location.href);
       lastUrl = location.href;
       dataStale = true;
       // Reset progressive collection — new product page, fresh slate (no stopped card)
@@ -1528,7 +1531,7 @@
       }).catch(() => { /* popup may not be open */ });
 
     } catch (e) {
-      console.warn("[SureShop] Progressive scan update failed:", e.message);
+      dbgErr("[SureShop] Progressive scan update failed:", e.message);
     }
   }
 
@@ -1540,7 +1543,7 @@
       const newOnes = harvestNewReviews();
       if (newOnes.length > 0) {
         progressiveReviews.push(...newOnes);
-        console.log(
+        dbg(
           `[SureShop] Progressive: +${newOnes.length} reviews (total: ${progressiveReviews.length})`
         );
         // Send reviews directly to popup immediately — no backend roundtrip needed
@@ -1601,7 +1604,7 @@
         };
         findReviews(state, 0);
         if (reviews.length > 0) {
-          console.log(`[SureShop] Got ${reviews.length} reviews from window.${key}`);
+          dbg(`[SureShop] Got ${reviews.length} reviews from window.${key}`);
           return reviews;
         }
       } catch (_) {}
@@ -1643,7 +1646,7 @@
             };
             findReviews(parsed, 0);
             if (reviews.length > 0) {
-              console.log(`[SureShop] Got ${reviews.length} reviews from inline script tag`);
+              dbg(`[SureShop] Got ${reviews.length} reviews from inline script tag`);
               return reviews;
             }
           } catch (_) {}
@@ -1723,7 +1726,7 @@
       if (!gotData) break;
     }
 
-    console.log(`[SureShop] fetchReviewsFromApi: ${reviews.length} reviews for itemId=${itemId}`);
+    dbg(`[SureShop] fetchReviewsFromApi: ${reviews.length} reviews for itemId=${itemId}`);
     return reviews;
   }
 
@@ -1755,7 +1758,7 @@
             progressiveReviews.push(r);
           }
         }
-        console.log(`[SureShop] Page state: ${progressiveReviews.length} reviews`);
+        dbg(`[SureShop] Page state: ${progressiveReviews.length} reviews`);
         chrome.runtime.sendMessage({
           type: "LAZADA_REVIEWS_DIRECT",
           reviews: progressiveReviews
@@ -1778,7 +1781,7 @@
             progressiveReviews.push(r);
           }
         }
-        console.log(`[SureShop] API got ${progressiveReviews.length} reviews — sending to popup`);
+        dbg(`[SureShop] API got ${progressiveReviews.length} reviews — sending to popup`);
         chrome.runtime.sendMessage({
           type: "LAZADA_REVIEWS_DIRECT",
           reviews: progressiveReviews
@@ -1786,10 +1789,10 @@
         sendProgressiveUpdate();
         setCardScanningState(null, null, progressiveReviews.length);
       } else {
-        console.log("[SureShop] API returned 0 reviews — will fall back to DOM");
+        dbg("[SureShop] API returned 0 reviews — will fall back to DOM");
       }
     } catch (e) {
-      console.warn("[SureShop] API fetch threw:", e.message);
+      dbgErr("[SureShop] API fetch threw:", e.message);
     }
 
     if (!progressiveActive) return; // stopped while awaiting API
@@ -1817,7 +1820,7 @@
         reviewTab.scrollIntoView({ behavior: "smooth", block: "center" });
         reviewTab.click();
         reviewTabClicked = true;
-        console.log("[SureShop] Clicked Reviews tab:", (reviewTab.innerText || reviewTab.textContent).trim().slice(0, 60));
+        dbg("[SureShop] Clicked Reviews tab:", (reviewTab.innerText || reviewTab.textContent).trim().slice(0, 60));
       }
     } catch (_) {}
 
@@ -1885,20 +1888,20 @@
   // Message Handler
   // ===============================
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log("Lazada content script received message:", message.type);
+    dbg("Lazada content script received message:", message.type);
 
     if (message.type === "EXTRACT_DATA") {
-      console.log("Lazada: handling EXTRACT_DATA");
+      dbg("Lazada: handling EXTRACT_DATA");
       const data = extractLazadaData();
-      console.log("Lazada extracted data:", data);
+      dbg("Lazada extracted data:", data);
       sendResponse(data);
       return true;
     }
 
     if (message.type === "EXTRACT_REVIEWS") {
-      console.log("Lazada: handling EXTRACT_REVIEWS");
+      dbg("Lazada: handling EXTRACT_REVIEWS");
       const reviews = extractLazadaReviews(10);
-      console.log("Lazada extracted reviews:", reviews);
+      dbg("Lazada extracted reviews:", reviews);
       sendResponse({ reviews: reviews.value });
       return true;
     }
@@ -1944,7 +1947,7 @@
       return true;
     }
 
-    console.log("Unknown message type:", message.type);
+    dbg("Unknown message type:", message.type);
     return false;
   });
 })();

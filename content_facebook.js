@@ -7,7 +7,10 @@
   // Only activate on Marketplace pages
   if (!location.pathname.startsWith("/marketplace")) return;
 
-  console.log("SureShop content_facebook.js loaded (Facebook Marketplace)");
+  const DEBUG = false;
+  const dbg = (...a) => { if (DEBUG) console.log(...a); };
+  const dbgErr = (...a) => { if (DEBUG) console.error(...a); };
+  dbg("SureShop content_facebook.js loaded (Facebook Marketplace)");
 
   // Facebook Marketplace listing page detection:
   // e.g. https://www.facebook.com/marketplace/item/1234567890/
@@ -427,28 +430,6 @@
     return { value: null, confidence: "low" };
   }
 
-  function extractSellerProfileUrl() {
-    const isNavText = t => /^(marketplace|facebook|chats?|notifications?|home|messenger|see all|seller details?|seller)$/i.test(t);
-    // Also match username-style URLs like facebook.com/johndoe
-    const profileLinks = [...document.querySelectorAll(
-      'a[href*="/marketplace/profile/"], a[href*="/user/"], a[href*="/profile.php"], a[href^="https://www.facebook.com/"]'
-    )];
-    for (const link of profileLinks) {
-      const text = cleanText(link.textContent);
-      const href = link.getAttribute("href");
-      if (!href || !text || text.length >= 60 || /[?!]/.test(text) || isNavText(text)) continue;
-      try {
-        const u = new URL(href.startsWith("http") ? href : `https://www.facebook.com${href}`);
-        // Accept only facebook.com profile paths — skip generic marketplace browse pages
-        if (u.hostname.endsWith("facebook.com") && u.pathname.length > 1 &&
-            !/^\/marketplace\/?$/.test(u.pathname)) {
-          return { value: `${u.origin}${u.pathname}`, confidence: "high" };
-        }
-      } catch (_) {}
-    }
-    return { value: null, confidence: "low" };
-  }
-
   function extractCondition() {
     const bodyText = document.body.innerText;
     // Normalize em/en dashes to hyphens before matching
@@ -703,12 +684,11 @@
   // Main Extraction
   // ===============================
   function extractFacebookData() {
-    console.log("Extracting Facebook Marketplace data...");
+    dbg("Extracting Facebook Marketplace data...");
     try {
       const productName = extractProductName();
       const price = extractPrice();
       const sellerName = extractSellerName();
-      const profileUrl = extractSellerProfileUrl();
       const condition = extractCondition();
       const locationInfo = extractLocation();
       const listingDate = extractListingDate();
@@ -747,7 +727,7 @@
         extracted_at: new Date().toISOString()
       }, 'facebook');
     } catch (err) {
-      console.error("extractFacebookData error:", err);
+      dbgErr("extractFacebookData error:", err);
       return { success: false, error: err.message };
     }
   }
@@ -811,7 +791,7 @@
 
   function checkAndShowCard() {
     if (isListingPage()) {
-      console.log("Facebook Marketplace listing detected, showing scan card");
+      dbg("Facebook Marketplace listing detected, showing scan card");
       showScanCard();
     }
   }
@@ -835,7 +815,7 @@
 
   setInterval(() => {
     if (location.href === lastUrl) return;
-    console.log("Facebook URL changed (SPA):", lastUrl, "→", location.href);
+    dbg("Facebook URL changed (SPA):", lastUrl, "→", location.href);
     lastUrl = location.href;
     dataStale = true;
 
@@ -866,7 +846,7 @@
   // Message Handler
   // ===============================
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log("Facebook content script received message:", message.type);
+    dbg("Facebook content script received message:", message.type);
 
     if (message.type === "EXTRACT_DATA") {
       try {

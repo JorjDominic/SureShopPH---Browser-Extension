@@ -1,4 +1,12 @@
 // -----------------------------------------------------------------------
+// Debug mode — set to true only during local development.
+// All console output is suppressed when false.
+// -----------------------------------------------------------------------
+const DEBUG = false;
+const dbg = (...args) => { if (DEBUG) console.log(...args); };
+const dbgErr = (...args) => { if (DEBUG) console.error(...args); };
+
+// -----------------------------------------------------------------------
 // API base URL — update this to your production HTTPS endpoint before
 // submitting to the Chrome Web Store. HTTP localhost is only for local dev.
 // -----------------------------------------------------------------------
@@ -151,24 +159,24 @@ function checkForAutoScanResults() {
   // Check if there are recent auto-scan results to display - ONLY PRODUCT SCANS
   chrome.storage.local.get("lastAutoScanResult", ({ lastAutoScanResult }) => {
     if (lastAutoScanResult && isRecentResult(lastAutoScanResult.timestamp)) {
-      console.log("=== SCAN DATA SNAPSHOT: lastAutoScanResult from storage ===");
-      console.log(JSON.stringify(lastAutoScanResult, null, 2));
+      dbg("=== SCAN DATA SNAPSHOT: lastAutoScanResult from storage ===");
+      dbg(JSON.stringify(lastAutoScanResult, null, 2));
       
       // ONLY show PRODUCT scan results in the extension popup
       if (lastAutoScanResult.type === "product") {
-        console.log("Displaying product scan result");
+        dbg("Displaying product scan result");
         showRiskAssessment(
           lastAutoScanResult.risk_score, 
           lastAutoScanResult.risk_level,
           lastAutoScanResult.description || null
         );
       } else {
-        console.log("Ignoring non-product scan result in extension popup:", lastAutoScanResult.type);
+        dbg("Ignoring non-product scan result in extension popup:", lastAutoScanResult.type);
         // Don't show URL scan results in the extension popup
         // URL scan results are shown in the universal popup on the webpage
       }
     } else {
-      console.log("No recent product scan results found");
+      dbg("No recent product scan results found");
     }
   });
 }
@@ -198,7 +206,7 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
 
 // Handle activation (ONE TIME) - Updated with better error handling
 activateBtn.addEventListener("click", async () => {
-  console.log("Activate clicked");
+  dbg("Activate clicked");
   const key = activationKeyInput.value.trim();
   if (!key) {
     showActivationMessage("Please enter an activation key.");
@@ -221,7 +229,7 @@ activateBtn.addEventListener("click", async () => {
   activateBtn.disabled = true;
 
   try {
-    console.log("Sending activation request...");
+    dbg("Sending activation request...");
     
     const res = await fetch(
       `${SURESHOP_API_BASE}/activate_extension.php`,
@@ -235,15 +243,15 @@ activateBtn.addEventListener("click", async () => {
       }
     );
 
-    console.log("Response status:", res.status);
-    console.log("Response headers:", [...res.headers.entries()]);
+    dbg("Response status:", res.status);
+    dbg("Response headers:", [...res.headers.entries()]);
 
     if (!res.ok) {
       throw new Error(`HTTP error! status: ${res.status}`);
     }
 
     const responseData = await res.json();
-    console.log("Response data:", responseData);
+    dbg("Response data:", responseData);
 
     // Check for different possible field names
     let accessToken = null;
@@ -257,7 +265,7 @@ activateBtn.addEventListener("click", async () => {
     }
 
     if (accessToken) {
-      console.log("Access token found, storing...");
+      dbg("Access token found, storing...");
       await chrome.storage.local.set({ 
         accessToken: accessToken,
         activatedAt: Date.now()
@@ -265,13 +273,14 @@ activateBtn.addEventListener("click", async () => {
       
       activationSection.style.display = "none";
       scanSection.style.display = "block";
+      showWelcomeCard();
     } else {
-      console.error("No access token in response:", responseData);
+      dbgErr("No access token in response:", responseData);
       showActivationMessage("Invalid activation key or server error.");
     }
 
   } catch (error) {
-    console.error("Activation error:", error);
+    dbgErr("Activation error:", error);
     showActivationMessage("Failed to connect. Please check your connection and try again.");
   } finally {
     activateBtn.textContent = "Activate";
@@ -582,6 +591,33 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   }
 }
 
+// -----------------------------------------------------------------------
+// First-run welcome card — shown once after successful activation.
+// -----------------------------------------------------------------------
+function showWelcomeCard() {
+  const output = document.getElementById("output");
+  if (!output) return;
+  output.innerHTML = `
+    <div class="welcome-card" id="welcomeCard">
+      <div class="welcome-card-header">
+        <i class="fas fa-shield-alt"></i>
+        <strong>Welcome to SureShop!</strong>
+      </div>
+      <div class="welcome-card-body">
+        <p>You're all set. Navigate to any product page on a supported site and use the scan buttons:</p>
+        <ul class="welcome-tips">
+          <li><i class="fas fa-shield-alt"></i> <strong>Normal Scan</strong> — Instant risk assessment of product &amp; seller</li>
+          <li><i class="fas fa-layer-group"></i> <strong>Deep Scan</strong> — Full analysis including buyer reviews</li>
+          <li><i class="fas fa-comments"></i> <strong>Scan Comments</strong> — Collect reviews without re-running the product scan</li>
+        </ul>
+      </div>
+      <button class="welcome-dismiss-btn" id="welcomeDismiss">Got it <i class="fas fa-check"></i></button>
+    </div>`;
+  document.getElementById("welcomeDismiss")?.addEventListener("click", () => {
+    output.innerHTML = "";
+  });
+}
+
 // Enhanced manual scan function - PRODUCTS ONLY
 function performScan(isAutomatic = false, withReviews = false) {
   chrome.storage.local.get("accessToken", ({ accessToken }) => {
@@ -611,7 +647,7 @@ function performScan(isAutomatic = false, withReviews = false) {
       }
 
       const currentTab = tabs[0];
-      console.log("Current tab URL:", currentTab.url);
+      dbg("Current tab URL:", currentTab.url);
 
       // Detect platform via the central registry
       const platform = detectPlatform(currentTab.url);
@@ -691,8 +727,8 @@ function performScan(isAutomatic = false, withReviews = false) {
         return;
       }
 
-      console.log("Extracted data:", response);
-      console.log("Product name from extraction:", response.product_name);
+      dbg("Extracted data:", response);
+      dbg("Product name from extraction:", response.product_name);
       output.textContent = "📡 Analyzing product data...";
 
       try {
@@ -739,8 +775,8 @@ function performScan(isAutomatic = false, withReviews = false) {
         if (currentTab.url.includes("lazada.com.ph")) lastLazadaProductData = productData;
         if (currentTab.url.includes("facebook.com")) lastFacebookProductData = productData;
 
-        console.log("=== SCAN DATA SNAPSHOT: productData sent to scan.php ===");
-        console.log(JSON.stringify(productData, null, 2));
+        dbg("=== SCAN DATA SNAPSHOT: productData sent to scan.php ===");
+        dbg(JSON.stringify(productData, null, 2));
 
         const scanResponse = await fetch(
           `${SURESHOP_API_BASE}/scan.php`,
@@ -756,13 +792,13 @@ function performScan(isAutomatic = false, withReviews = false) {
 
         if (!scanResponse.ok) {
           const errorText = await scanResponse.text();
-          console.error("Server error:", scanResponse.status, errorText);
+          dbgErr("Server error:", scanResponse.status, errorText);
           throw new Error(`Server error: ${scanResponse.status}`);
         }
 
         const result = await scanResponse.json();
-        console.log("=== SCAN DATA SNAPSHOT: API response from scan.php ===");
-        console.log(JSON.stringify(result, null, 2));
+        dbg("=== SCAN DATA SNAPSHOT: API response from scan.php ===");
+        dbg(JSON.stringify(result, null, 2));
 
         if (result.risk_score !== undefined && result.risk_level !== undefined) {
           // Store result for later retrieval
@@ -852,15 +888,34 @@ function performScan(isAutomatic = false, withReviews = false) {
           output.textContent = "";
         }
       } catch (error) {
-        console.error("Scan failed:", error);
-        if (error instanceof TypeError && error.message === "Failed to fetch") {
-          showToast("Cannot reach the SureShop server. Check your connection.", "error", 5000);
+        const isOffline = error instanceof TypeError && error.message === "Failed to fetch";
+        let errMsg, errDetail;
+        if (isOffline) {
+          errMsg = "Cannot reach the SureShop server.";
+          errDetail = "Make sure the server is running and your internet connection is active, then try again.";
         } else if (error.message && error.message.startsWith("Server error:")) {
-          showToast(`${error.message}. Please try again later.`, "error", 5000);
+          errMsg = error.message;
+          errDetail = "The server returned an error. Please try again later.";
         } else {
-          showToast(`Scan failed: ${error.message}`, "error", 5000);
+          errMsg = "Scan failed.";
+          errDetail = error.message || "An unexpected error occurred.";
         }
-        output.textContent = "";
+        output.innerHTML = `
+          <div class="error-recovery-card">
+            <div class="error-recovery-icon"><i class="fas fa-exclamation-triangle"></i></div>
+            <div class="error-recovery-msg"><strong>${errMsg}</strong></div>
+            <div class="error-recovery-detail">${errDetail}</div>
+            <button class="error-retry-btn" id="retryBtn">
+              <i class="fas fa-redo"></i> Try Again
+            </button>
+          </div>`;
+        const retryBtn = document.getElementById("retryBtn");
+        if (retryBtn) {
+          retryBtn.addEventListener("click", () => {
+            output.innerHTML = "";
+            performScan(false, withReviews);
+          });
+        }
       } finally {
         resetButton();
       }
@@ -913,7 +968,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "SHOPEE_SCAN_UPDATED") {
-    console.log("[Popup] Progressive update:", message.risk_score, message.risk_level);
+    dbg("[Popup] Progressive update:", message.risk_score, message.risk_level);
     showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null, lastShopeeProductData);
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, false);
@@ -960,7 +1015,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "LAZADA_SCAN_UPDATED") {
-    console.log("[Popup] Lazada progressive update:", message.risk_score, message.risk_level);
+    dbg("[Popup] Lazada progressive update:", message.risk_score, message.risk_level);
     showRiskAssessment(message.risk_score, message.risk_level, lastLazadaProductData?.description || null, lastLazadaProductData);
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, true);
@@ -1217,7 +1272,7 @@ unbindBtn.addEventListener("click", async () => {
     }, 1200);
 
   } catch (error) {
-    console.error("Unbind error:", error);
+    dbgErr("Unbind error:", error);
     showUnbindMessage("Failed to unbind. Please try again.");
     unbindBtn.disabled = false;
     unbindBtn.innerHTML = '<i class="fas fa-unlink"></i> Unbind Activation Key';

@@ -21,7 +21,10 @@
   const _isSupported = SUPPORTED_DOMAINS.some(d => _host === d || _host.endsWith("." + d));
   if (!_isSupported) return;
 
-  console.log("Universal URL Scanner loaded for:", location.hostname);
+  const DEBUG = false;
+  const dbg = (...a) => { if (DEBUG) console.log(...a); };
+
+  dbg("Universal URL Scanner loaded for:", location.hostname);
 
   let currentScanId = null;
   let storageListener = null;
@@ -32,18 +35,18 @@
   chrome.runtime.sendMessage({type: "GET_TAB_ID"}, (response) => {
     if (response && response.tabId) {
       tabId = response.tabId;
-      console.log("Universal: Tab ID received:", tabId);
+      dbg("Universal: Tab ID received:", tabId);
     }
   });
 
   // Track if tab is visible/active
   document.addEventListener('visibilitychange', () => {
     isActiveTab = !document.hidden;
-    console.log("Universal: Tab visibility changed. Active:", isActiveTab);
+    dbg("Universal: Tab visibility changed. Active:", isActiveTab);
     
     // Clean up if tab becomes hidden
     if (!isActiveTab) {
-      console.log("Universal: Tab hidden, cleaning up listeners");
+      dbg("Universal: Tab hidden, cleaning up listeners");
       cleanupScanListeners();
     }
   });
@@ -60,20 +63,20 @@
     const isFacebookMarketplace = hostname.includes("facebook.com") && pathname.startsWith("/marketplace");
 
     if (isShopeeProduct || isLazada || isFacebookMarketplace) {
-      console.log("Universal: Skipping URL scan card for dedicated platform page:", hostname);
+      dbg("Universal: Skipping URL scan card for dedicated platform page:", hostname);
       return;
     }
 
     // Don't show if tab is not active
     if (!isActiveTab) {
-      console.log("Universal: Tab not active, skipping scan card");
+      dbg("Universal: Tab not active, skipping scan card");
       return;
     }
 
     // Remove existing card if present
     const existingCard = document.getElementById("sureshop-url-scan-card");
     if (existingCard) {
-      console.log("Universal: Removing existing URL scan card");
+      dbg("Universal: Removing existing URL scan card");
       existingCard.remove();
     }
 
@@ -393,11 +396,11 @@
       setTimeout(() => card.remove(), 250);
     };
 
-    console.log("Universal: URL scan card displayed");
+    dbg("Universal: URL scan card displayed");
 
     // Generate unique scan ID for this scan (include tab ID)
     currentScanId = Date.now() + "_" + (tabId || 'unknown') + "_" + Math.random().toString(36).substr(2, 9);
-    console.log("Universal: Generated scan ID:", currentScanId);
+    dbg("Universal: Generated scan ID:", currentScanId);
 
     // Listen for scan results from background script
     listenForScanResults();
@@ -452,12 +455,12 @@
       }
     }, 10000);
 
-    console.log("Universal: URL scan card updated with results:", result);
+    dbg("Universal: URL scan card updated with results:", result);
   }
 
   // Cleanup function to remove listeners
   function cleanupScanListeners() {
-    console.log("Universal: Cleaning up scan listeners for tab:", tabId);
+    dbg("Universal: Cleaning up scan listeners for tab:", tabId);
     if (storageListener && chrome.storage && chrome.storage.onChanged) {
       chrome.storage.onChanged.removeListener(storageListener);
       storageListener = null;
@@ -469,14 +472,14 @@
   function listenForScanResults() {
     // Don't start listening if tab is not active
     if (!isActiveTab) {
-      console.log("Universal: Tab not active, skipping result listener");
+      dbg("Universal: Tab not active, skipping result listener");
       return;
     }
 
-    console.log("Universal: Starting to listen for scan results...");
-    console.log("Universal: Current page URL:", location.href);
-    console.log("Universal: Scan ID:", currentScanId);
-    console.log("Universal: Tab ID:", tabId);
+    dbg("Universal: Starting to listen for scan results...");
+    dbg("Universal: Current page URL:", location.href);
+    dbg("Universal: Scan ID:", currentScanId);
+    dbg("Universal: Tab ID:", tabId);
     
     let hasFoundResult = false;
     let fallbackChecker = null;
@@ -486,58 +489,58 @@
       storageListener = (changes, namespace) => {
         // Only process if this tab is still active
         if (!isActiveTab || !currentScanId) {
-          console.log("Universal: Tab inactive or no scan ID, ignoring storage change");
+          dbg("Universal: Tab inactive or no scan ID, ignoring storage change");
           return;
         }
 
-        console.log("Universal: Storage changed for tab", tabId, ":", changes);
+        dbg("Universal: Storage changed for tab", tabId, ":", changes);
         
         if (changes.lastAutoScanResult && !hasFoundResult) {
           const newResult = changes.lastAutoScanResult.newValue;
-          console.log("Universal: New scan result from storage change:", newResult);
+          dbg("Universal: New scan result from storage change:", newResult);
           
           if (newResult && 
               newResult.type === "url" && 
               newResult.tabId === tabId && // ONLY process results for THIS tab
               isRecentResult(newResult.timestamp)) {
             
-            console.log("Universal: Result matches this tab! Checking URL match...");
-            console.log("Universal: Result URL:", newResult.url);
-            console.log("Universal: Current URL:", location.href);
+            dbg("Universal: Result matches this tab! Checking URL match...");
+            dbg("Universal: Result URL:", newResult.url);
+            dbg("Universal: Current URL:", location.href);
             
             // More flexible URL matching
             if (urlsMatch(newResult.url, location.href)) {
-              console.log("Universal: URLs match! Displaying results...");
+              dbg("Universal: URLs match! Displaying results...");
               hasFoundResult = true;
               updateCardWithResults(newResult);
               if (fallbackChecker) clearInterval(fallbackChecker);
               cleanupScanListeners();
             }
           } else if (newResult && newResult.tabId !== tabId) {
-            console.log("Universal: Ignoring result from different tab:", newResult.tabId);
+            dbg("Universal: Ignoring result from different tab:", newResult.tabId);
           }
         }
       };
       
       chrome.storage.onChanged.addListener(storageListener);
-      console.log("Universal: Storage listener added for tab:", tabId);
+      dbg("Universal: Storage listener added for tab:", tabId);
     }
     
     // Method 2: Polling as fallback - TAB-SPECIFIC
     const checkForResults = () => {
       if (hasFoundResult || !currentScanId || !isActiveTab) return;
       
-      console.log("Universal: Polling for results... Tab:", tabId);
+      dbg("Universal: Polling for results... Tab:", tabId);
       chrome.storage.local.get("lastAutoScanResult", ({ lastAutoScanResult }) => {
         if (lastAutoScanResult && 
             lastAutoScanResult.type === "url" &&
             lastAutoScanResult.tabId === tabId && // ONLY check results for THIS tab
             isRecentResult(lastAutoScanResult.timestamp)) {
           
-          console.log("Universal: Found scan result via polling for this tab:", lastAutoScanResult);
+          dbg("Universal: Found scan result via polling for this tab:", lastAutoScanResult);
           
           if (urlsMatch(lastAutoScanResult.url, location.href)) {
-            console.log("Universal: URLs match via polling! Displaying results...");
+            dbg("Universal: URLs match via polling! Displaying results...");
             hasFoundResult = true;
             updateCardWithResults(lastAutoScanResult);
             if (fallbackChecker) clearInterval(fallbackChecker);
@@ -556,7 +559,7 @@
       if (fallbackChecker) clearInterval(fallbackChecker);
       
       if (!hasFoundResult && currentScanId && isActiveTab) {
-        console.log("Universal: Timeout reached, no results found for tab:", tabId);
+        dbg("Universal: Timeout reached, no results found for tab:", tabId);
         const card = document.getElementById("sureshop-url-scan-card");
         if (card && card.querySelector(".scan-status").style.display !== "none") {
           const statusText = card.querySelector(".scanning-badge span");
@@ -590,14 +593,14 @@
       
       const match = u1.hostname === u2.hostname && path1 === path2;
       
-      console.log("Universal: URL comparison for tab", tabId + ":");
-      console.log("  URL1:", `${u1.hostname}${path1}`);
-      console.log("  URL2:", `${u2.hostname}${path2}`);
-      console.log("  Match:", match);
+      dbg("Universal: URL comparison for tab", tabId + ":");
+      dbg("  URL1:", `${u1.hostname}${path1}`);
+      dbg("  URL2:", `${u2.hostname}${path2}`);
+      dbg("  Match:", match);
       
       return match;
     } catch (e) {
-      console.log("Universal: URL parsing error:", e);
+      dbg("Universal: URL parsing error:", e);
       // Fallback to simple string comparison
       return url1 === url2;
     }
@@ -608,7 +611,7 @@
     const now = Date.now();
     const twoMinutes = 2 * 60 * 1000; // Reduced to 2 minutes for performance
     const isRecent = (now - timestamp) < twoMinutes;
-    console.log("Universal: Result timestamp check for tab", tabId + ":", new Date(timestamp), "Recent:", isRecent);
+    dbg("Universal: Result timestamp check for tab", tabId + ":", new Date(timestamp), "Recent:", isRecent);
     return isRecent;
   }
 
@@ -626,24 +629,24 @@
     const isFacebookMarketplace = hostname.includes("facebook.com") && pathname.startsWith("/marketplace");
 
     if (isShopeeProduct || isLazada || isFacebookMarketplace) {
-      console.log("Universal: Skipping URL scan on dedicated platform page:", hostname);
+      dbg("Universal: Skipping URL scan on dedicated platform page:", hostname);
       return;
     }
 
     // Only scan if tab is active
     if (!isActiveTab) {
-      console.log("Universal: Tab not active, skipping scan");
+      dbg("Universal: Tab not active, skipping scan");
       return;
     }
 
     // All other pages — trigger URL scan
-    console.log("Universal: Sending URL_SCAN_PAGE message for:", location.href);
+    dbg("Universal: Sending URL_SCAN_PAGE message for:", location.href);
     showUrlScanCard();
     chrome.runtime.sendMessage({ type: "URL_SCAN_PAGE" });
   }
 
   // Send initial message immediately
-  console.log("Universal: About to send initial message");
+  dbg("Universal: About to send initial message");
   notifyBackgroundScript();
 
   // Returns origin+pathname only, ignoring hash and query params.
@@ -662,7 +665,7 @@
   let lastHostname = location.hostname;
   setInterval(() => {
     if (location.hostname !== lastHostname && isActiveTab) {
-      console.log("Universal: Domain changed from", lastHostname, "to", location.hostname);
+      dbg("Universal: Domain changed from", lastHostname, "to", location.hostname);
       lastHostname = location.hostname;
       cleanupScanListeners();
       const existingCard = document.getElementById("sureshop-url-scan-card");
@@ -678,7 +681,7 @@
 
   // Clean up when tab becomes hidden
   window.addEventListener('blur', () => {
-    console.log("Universal: Window blur event - cleaning up");
+    dbg("Universal: Window blur event - cleaning up");
     cleanupScanListeners();
   });
 })();
