@@ -10,7 +10,7 @@ const dbgErr = (...args) => { if (DEBUG) console.error(...args); };
 // API base URL — update this to your production HTTPS endpoint before
 // submitting to the Chrome Web Store. HTTP localhost is only for local dev.
 // -----------------------------------------------------------------------
-const SURESHOP_API_BASE = "http://localhost/php/sureshopwebsite/app/controller";
+const SURESHOP_API_BASE = "http://localhost:8000";
 
 // -----------------------------------------------------------------------
 // Supported shopping platforms (keep in sync with manifest.json)
@@ -70,7 +70,7 @@ const commentOnlyBtn = document.getElementById("commentOnlyBtn");
 const activationSection = document.getElementById("activationSection");
 const scanSection = document.getElementById("scanSection");
 const activateBtn = document.getElementById("activateBtn");
-const activationKeyInput = document.getElementById("activationKey");
+const activationKeyInput = document.getElementById("activationKeyInput");
 const activationMessage = document.getElementById("activationMessage");
 
 // Progressive collection state
@@ -85,8 +85,8 @@ function showActivationMessage(text, isError = true) {
   activationMessage.className = isError ? "activation-msg activation-msg--error" : "activation-msg activation-msg--success";
 }
 
-// On popup open: decide which UI to show
-chrome.storage.local.get(["accessToken"], ({ accessToken }) => {
+// On popup open: validate stored token with server
+async function checkAuthStatus() {
   // Always clear previous scan results so the panel starts fresh each open
   if (output) {
     output.innerHTML = '';
@@ -96,19 +96,40 @@ chrome.storage.local.get(["accessToken"], ({ accessToken }) => {
   }
   resetCommentsButton();
   resetCommentOnlyButton();
-  progressiveState  = "idle";
-  commentOnlyState  = "idle";
+  progressiveState = "idle";
+  commentOnlyState = "idle";
 
-  if (accessToken) {
-    activationSection.style.display = "none";
-    scanSection.style.display = "block";
-    refreshPageStatus();
-    checkForAutoScanResults();
-  } else {
+  const { accessToken } = await chrome.storage.local.get("accessToken");
+
+  if (!accessToken) {
     activationSection.style.display = "block";
     scanSection.style.display = "none";
+    return;
   }
-});
+
+  try {
+    const res = await fetch(`${SURESHOP_API_BASE}/auth/status`, {
+      headers: { "Authorization": `Bearer ${accessToken}` }
+    });
+    const { valid } = await res.json();
+
+    if (!valid) {
+      await chrome.storage.local.remove(["accessToken", "activatedAt", "lastAutoScanResult"]);
+      activationSection.style.display = "block";
+      scanSection.style.display = "none";
+      return;
+    }
+  } catch (_) {
+    // Server unreachable — trust the stored token rather than locking the user out
+  }
+
+  activationSection.style.display = "none";
+  scanSection.style.display = "block";
+  refreshPageStatus();
+  checkForAutoScanResults();
+}
+
+checkAuthStatus();
 
 // -----------------------------------------------------------------------
 // Page status banner: tells the user whether the current tab is a
@@ -187,14 +208,10 @@ function isRecentResult(timestamp) {
   return (now - timestamp) < fiveMinutes;
 }
 
-// Submit activation on Enter
-const activationKeyInputEl = document.getElementById("activationKey");
-if (activationKeyInputEl) {
-  activationKeyInputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      document.getElementById("activateBtn")?.click();
-    }
+// Submit on Enter in the activation key field
+if (activationKeyInput) {
+  activationKeyInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); activateBtn?.click(); }
   });
 }
 
@@ -204,81 +221,38 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
   if (changeInfo.url || changeInfo.status === "complete") refreshPageStatus();
 });
 
-// Handle activation (ONE TIME) - Updated with better error handling
+
+// Handle activation key submission
 activateBtn.addEventListener("click", async () => {
-  dbg("Activate clicked");
-  const key = activationKeyInput.value.trim();
+  const key = activationKeyInput?.value.trim();
   if (!key) {
-    showActivationMessage("Please enter an activation key.");
-    activationKeyInput.focus();
-    return;
-  }
-  if (key.length < 8) {
-    showActivationMessage("Activation key looks too short. Please double-check.");
-    activationKeyInput.focus();
-    return;
-  }
-  if (!/^[A-Za-z0-9_\-]+$/.test(key)) {
-    showActivationMessage("Activation key contains invalid characters.");
-    activationKeyInput.focus();
+    showActivationMessage("Please enter your activation key.");
+    activationKeyInput?.focus();
     return;
   }
   activationMessage.className = "";
-
   activateBtn.textContent = "Activating...";
   activateBtn.disabled = true;
 
   try {
-    dbg("Sending activation request...");
-    
-    const res = await fetch(
-      `${SURESHOP_API_BASE}/activate_extension.php`,
-      {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Accept": "application/json"
-        },
-        body: JSON.stringify({ activation_key: key })
-      }
-    );
-
-    dbg("Response status:", res.status);
-    dbg("Response headers:", [...res.headers.entries()]);
-
-    if (!res.ok) {
-      throw new Error(`HTTP error! status: ${res.status}`);
+    const res = await fetch(`${SURESHOP_API_BASE}/activate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ activation_key: key })
+    });
+    if (res.status === 401 || res.status === 403) {
+      showActivationMessage("Invalid activation key. Please try again.");
+      return;
     }
+    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
 
-    const responseData = await res.json();
-    dbg("Response data:", responseData);
+    const data = await res.json();
+    const token = data.access_token || key;
+    await chrome.storage.local.set({ accessToken: token, activatedAt: Date.now() });
 
-    // Check for different possible field names
-    let accessToken = null;
-    
-    if (responseData.access_token) {
-      accessToken = responseData.access_token;
-    } else if (responseData.accessToken) {
-      accessToken = responseData.accessToken;
-    } else if (responseData.token) {
-      accessToken = responseData.token;
-    }
-
-    if (accessToken) {
-      dbg("Access token found, storing...");
-      await chrome.storage.local.set({ 
-        accessToken: accessToken,
-        activatedAt: Date.now()
-      });
-      
-      activationSection.style.display = "none";
-      scanSection.style.display = "block";
-      showWelcomeCard();
-    } else {
-      dbgErr("No access token in response:", responseData);
-      showActivationMessage("Invalid activation key or server error.");
-    }
-
+    activationSection.style.display = "none";
+    scanSection.style.display = "block";
+    refreshPageStatus();
   } catch (error) {
     dbgErr("Activation error:", error);
     showActivationMessage("Failed to connect. Please check your connection and try again.");
@@ -591,33 +565,6 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   }
 }
 
-// -----------------------------------------------------------------------
-// First-run welcome card — shown once after successful activation.
-// -----------------------------------------------------------------------
-function showWelcomeCard() {
-  const output = document.getElementById("output");
-  if (!output) return;
-  output.innerHTML = `
-    <div class="welcome-card" id="welcomeCard">
-      <div class="welcome-card-header">
-        <i class="fas fa-shield-alt"></i>
-        <strong>Welcome to SureShop!</strong>
-      </div>
-      <div class="welcome-card-body">
-        <p>You're all set. Navigate to any product page on a supported site and use the scan buttons:</p>
-        <ul class="welcome-tips">
-          <li><i class="fas fa-shield-alt"></i> <strong>Normal Scan</strong> — Instant risk assessment of product &amp; seller</li>
-          <li><i class="fas fa-layer-group"></i> <strong>Deep Scan</strong> — Full analysis including buyer reviews</li>
-          <li><i class="fas fa-comments"></i> <strong>Scan Comments</strong> — Collect reviews without re-running the product scan</li>
-        </ul>
-      </div>
-      <button class="welcome-dismiss-btn" id="welcomeDismiss">Got it <i class="fas fa-check"></i></button>
-    </div>`;
-  document.getElementById("welcomeDismiss")?.addEventListener("click", () => {
-    output.innerHTML = "";
-  });
-}
-
 // Enhanced manual scan function - PRODUCTS ONLY
 function performScan(isAutomatic = false, withReviews = false) {
   chrome.storage.local.get("accessToken", ({ accessToken }) => {
@@ -732,7 +679,7 @@ function performScan(isAutomatic = false, withReviews = false) {
       output.textContent = "📡 Analyzing product data...";
 
       try {
-        // Format data for scan.php
+        // Format data for /analyze/listing
         // Normalize price: ensure it is always a number ("Free" → 0)
         const rawPrice = response.price;
         const normalizedPrice = (typeof rawPrice === 'string' && /free/i.test(rawPrice))
@@ -775,11 +722,11 @@ function performScan(isAutomatic = false, withReviews = false) {
         if (currentTab.url.includes("lazada.com.ph")) lastLazadaProductData = productData;
         if (currentTab.url.includes("facebook.com")) lastFacebookProductData = productData;
 
-        dbg("=== SCAN DATA SNAPSHOT: productData sent to scan.php ===");
+        dbg("=== SCAN DATA SNAPSHOT: productData sent to /analyze/listing ===");
         dbg(JSON.stringify(productData, null, 2));
 
         const scanResponse = await fetch(
-          `${SURESHOP_API_BASE}/scan.php`,
+          `${SURESHOP_API_BASE}/analyze/listing`,
           {
             method: "POST",
             headers: {
@@ -797,7 +744,7 @@ function performScan(isAutomatic = false, withReviews = false) {
         }
 
         const result = await scanResponse.json();
-        dbg("=== SCAN DATA SNAPSHOT: API response from scan.php ===");
+        dbg("=== SCAN DATA SNAPSHOT: API response from /analyze/listing ===");
         dbg(JSON.stringify(result, null, 2));
 
         if (result.risk_score !== undefined && result.risk_level !== undefined) {
@@ -940,7 +887,7 @@ async function rescanWithReviews(productData, reviews, platformKey) {
 
   try {
     const payload = { ...productData, reviews };
-    const resp = await fetch(`${SURESHOP_API_BASE}/scan.php`, {
+    const resp = await fetch(`${SURESHOP_API_BASE}/analyze/deep`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
       body: JSON.stringify(payload)
@@ -1241,36 +1188,14 @@ unbindBtn.addEventListener("click", async () => {
   hideUnbindMessage();
 
   try {
-    const { accessToken } = await chrome.storage.local.get("accessToken");
-
-    // Notify the server so the key can be freed/audited
-    if (accessToken) {
-      try {
-        await fetch(`${SURESHOP_API_BASE}/deactivate_extension.php`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${accessToken}`
-          },
-          body: JSON.stringify({ access_token: accessToken })
-        });
-      } catch (_) {
-        // Server unreachable — still remove locally
-      }
-    }
-
-    // Always clear local storage regardless of server response
     await chrome.storage.local.remove(["accessToken", "activatedAt", "lastAutoScanResult"]);
-
     showUnbindMessage("Activation key removed successfully.", false);
-
     setTimeout(() => {
       scanSection.style.display = "none";
-      activationSection.style.display = "flex";
+      activationSection.style.display = "block";
       hideUnbindMessage();
       output.textContent = "";
     }, 1200);
-
   } catch (error) {
     dbgErr("Unbind error:", error);
     showUnbindMessage("Failed to unbind. Please try again.");

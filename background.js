@@ -2,7 +2,7 @@
 // API base URL — update this to your production HTTPS endpoint before
 // submitting to the Chrome Web Store. HTTP localhost is only for local dev.
 // -----------------------------------------------------------------------
-const SURESHOP_API_BASE = "http://localhost/php/sureshopwebsite/app/controller";
+const SURESHOP_API_BASE = "http://localhost:8000";
 
 // -----------------------------------------------------------------------
 // Supported shopping platform domains. URL auto-scan is restricted to
@@ -411,14 +411,12 @@ function handleUrlAutoScan(tabId, url) {
       debugLog("🚀", "Actually starting URL scan for:", url);
       
       // Check if extension is activated
-      debugLog("🔐", "Checking for access token...");
       const { accessToken } = await chrome.storage.local.get("accessToken");
       if (!accessToken) {
         debugLog("❌", "URL auto-scan ABORTED: no access token");
         return;
       }
-      debugLog("✅", "Access token found for URL scan, length:", accessToken.length);
-      
+
       // Verify tab still exists
       debugLog("🔍", "Verifying tab", tabId, "still exists for URL scan...");
       let tab;
@@ -445,10 +443,10 @@ function handleUrlAutoScan(tabId, url) {
       };
       
       debugLog("🌐", "URL data prepared for server:", urlData);
-      debugLog("🌐", "Sending to:", SURESHOP_API_BASE + "/url_scan.php");
+      debugLog("🌐", "Sending to:", SURESHOP_API_BASE + "/analyze/url");
 
       // Send to server
-      const res = await fetch(`${SURESHOP_API_BASE}/url_scan.php`, {
+      const res = await fetch(`${SURESHOP_API_BASE}/analyze/url`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -12,7 +12,7 @@
   // ===============================
   // API Base (mirrors popup.js)
   // ===============================
-  const SURESHOP_API_BASE = "http://localhost/php/sureshopwebsite/app/controller";
+  const SURESHOP_API_BASE = "http://localhost:8000";
 
 function showScanCard() {
   if (!/-i\.\d+\.\d+/.test(location.href)) return;
@@ -870,7 +870,7 @@ function showScanCard() {
 
     try {
       const payload = { ...progressiveScanData, reviews: progressiveReviews };
-      const res = await fetch(`${SURESHOP_API_BASE}/scan.php`, {
+      const res = await fetch(`${SURESHOP_API_BASE}/analyze/deep`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

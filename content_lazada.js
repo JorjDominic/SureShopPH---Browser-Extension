@@ -15,7 +15,7 @@
   // ===============================
   // API Base (mirrors popup.js)
   // ===============================
-  const SURESHOP_API_BASE = "http://localhost/php/sureshopwebsite/app/controller";
+  const SURESHOP_API_BASE = "http://localhost:8000";
 
   // Lazada product page detection:
   // e.g. https://www.lazada.com.ph/products/name-i123456-s654321.html
@@ -1492,7 +1492,7 @@
 
     try {
       const payload = { ...progressiveScanData, reviews: progressiveReviews };
-      const res = await fetch(`${SURESHOP_API_BASE}/scan.php`, {
+      const res = await fetch(`${SURESHOP_API_BASE}/analyze/deep`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

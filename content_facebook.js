@@ -717,7 +717,7 @@
         listing_date: listingDate.value,
         description: fullDescription || null,
         image_count: imageCount.value,
-        // Explicit nulls — scan.php skips scoring checks that don't apply to FB
+        // Explicit nulls — backend skips scoring checks that don't apply to FB
         sold_count: null,
         rating: null,
         rating_count: null,
