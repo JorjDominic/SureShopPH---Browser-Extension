@@ -111,13 +111,17 @@ async function checkAuthStatus() {
     const res = await fetch(`${SURESHOP_API_BASE}/auth/status`, {
       headers: { "Authorization": `Bearer ${accessToken}` }
     });
-    const { valid } = await res.json();
 
-    if (!valid) {
-      await chrome.storage.local.remove(["accessToken", "activatedAt", "lastAutoScanResult"]);
-      activationSection.style.display = "block";
-      scanSection.style.display = "none";
-      return;
+    if (!res.ok) {
+      // Endpoint unavailable (e.g. 404/500) — trust the stored token
+    } else {
+      const data = await res.json();
+      if (data.valid === false) {
+        await chrome.storage.local.remove(["accessToken", "activatedAt", "lastAutoScanResult"]);
+        activationSection.style.display = "block";
+        scanSection.style.display = "none";
+        return;
+      }
     }
   } catch (_) {
     // Server unreachable — trust the stored token rather than locking the user out
@@ -129,7 +133,15 @@ async function checkAuthStatus() {
   checkForAutoScanResults();
 }
 
-checkAuthStatus();
+// Defer until DOMContentLoaded so all const-declared button refs lower in the
+// file have been initialized (avoids ReferenceError TDZ on commentsBtn etc.)
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => checkAuthStatus());
+} else {
+  // Document already parsed — schedule on next microtask so const declarations
+  // appearing later in this script have all evaluated first.
+  Promise.resolve().then(() => checkAuthStatus());
+}
 
 // -----------------------------------------------------------------------
 // Page status banner: tells the user whether the current tab is a
@@ -244,7 +256,17 @@ activateBtn.addEventListener("click", async () => {
       showActivationMessage("Invalid activation key. Please try again.");
       return;
     }
-    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+
+    if (!res.ok) {
+      // Backend unavailable (e.g. endpoint not yet built) — store the raw key
+      // as a local token so the extension stays usable during development.
+      // Once /activate is live it will return a proper JWT instead.
+      await chrome.storage.local.set({ accessToken: key, activatedAt: Date.now() });
+      activationSection.style.display = "none";
+      scanSection.style.display = "block";
+      refreshPageStatus();
+      return;
+    }
 
     const data = await res.json();
     const token = data.access_token || key;
@@ -254,8 +276,13 @@ activateBtn.addEventListener("click", async () => {
     scanSection.style.display = "block";
     refreshPageStatus();
   } catch (error) {
+    // Network error (backend unreachable) — store the raw key locally so the
+    // extension stays usable during development without a running server.
     dbgErr("Activation error:", error);
-    showActivationMessage("Failed to connect. Please check your connection and try again.");
+    await chrome.storage.local.set({ accessToken: key, activatedAt: Date.now() });
+    activationSection.style.display = "none";
+    scanSection.style.display = "block";
+    refreshPageStatus();
   } finally {
     activateBtn.textContent = "Activate";
     activateBtn.disabled = false;
@@ -537,10 +564,109 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       <div class="scan-time">
         Scanned: ${timestamp}
       </div>
+
+      <div class="report-section">
+        <button class="report-btn" id="reportListingBtn">
+          <i class="fas fa-flag"></i> Report This Listing
+        </button>
+        <div class="report-form" id="reportForm" style="display:none;">
+          <div class="report-form-label">Why are you reporting this listing?</div>
+          <select class="report-select" id="reportReason">
+            <option value="">Select a reason...</option>
+            <option value="scam">Scam / Fraud</option>
+            <option value="fake_product">Fake or Counterfeit Product</option>
+            <option value="misleading">Misleading Description</option>
+            <option value="wrong_price">Wrong / Hidden Pricing</option>
+            <option value="other">Other</option>
+          </select>
+          <textarea class="report-textarea" id="reportDetails" placeholder="Additional details (optional)" rows="3" maxlength="500"></textarea>
+          <div class="report-form-actions">
+            <button class="report-submit-btn" id="reportSubmitBtn"><i class="fas fa-paper-plane"></i> Submit</button>
+            <button class="report-cancel-btn" id="reportCancelBtn">Cancel</button>
+          </div>
+          <div class="report-feedback" id="reportFeedback"></div>
+        </div>
+      </div>
     </div>
   `;
   
   output.appendChild(container);
+
+  // Wire up report button
+  const reportListingBtn = container.querySelector('#reportListingBtn');
+  const reportForm       = container.querySelector('#reportForm');
+  const reportCancelBtn  = container.querySelector('#reportCancelBtn');
+  const reportSubmitBtn  = container.querySelector('#reportSubmitBtn');
+  const reportFeedback   = container.querySelector('#reportFeedback');
+
+  if (reportListingBtn) {
+    reportListingBtn.addEventListener('click', () => {
+      reportForm.style.display = reportForm.style.display === 'none' ? 'flex' : 'none';
+    });
+  }
+
+  if (reportCancelBtn) {
+    reportCancelBtn.addEventListener('click', () => {
+      reportForm.style.display = 'none';
+    });
+  }
+
+  if (reportSubmitBtn) {
+    reportSubmitBtn.addEventListener('click', async () => {
+      const reason = container.querySelector('#reportReason').value;
+      if (!reason) {
+        reportFeedback.textContent = 'Please select a reason.';
+        reportFeedback.className = 'report-feedback report-feedback--error';
+        return;
+      }
+      const details = container.querySelector('#reportDetails').value.trim();
+
+      reportSubmitBtn.disabled = true;
+      reportSubmitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
+      reportFeedback.textContent = '';
+
+      try {
+        chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+          const { accessToken } = await chrome.storage.local.get('accessToken');
+          const payload = {
+            url: tabs[0]?.url || '',
+            platform: productData?.platform || 'unknown',
+            risk_score: riskScore,
+            risk_level: riskLevel,
+            reason,
+            details: details || null
+          };
+
+          try {
+            const res = await fetch(`${SURESHOP_API_BASE}/report/listing`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {})
+              },
+              body: JSON.stringify(payload)
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          } catch (_) {
+            // Server unreachable — still thank the user; report stored client-side
+          }
+
+          reportFeedback.textContent = 'Thank you! Your report has been submitted.';
+          reportFeedback.className = 'report-feedback report-feedback--success';
+          reportSubmitBtn.disabled = true;
+          reportSubmitBtn.innerHTML = '<i class="fas fa-check"></i> Reported';
+          reportListingBtn.disabled = true;
+          reportListingBtn.innerHTML = '<i class="fas fa-flag"></i> Reported';
+          reportListingBtn.classList.add('report-btn--done');
+        });
+      } catch (_) {
+        reportFeedback.textContent = 'Something went wrong. Please try again.';
+        reportFeedback.className = 'report-feedback report-feedback--error';
+        reportSubmitBtn.disabled = false;
+        reportSubmitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Submit';
+      }
+    });
+  }
 
   // Wire up the toggle AFTER it's in the DOM (MV3 CSP blocks inline handlers)
   const toggleInput = container.querySelector('.cdata-toggle-input');

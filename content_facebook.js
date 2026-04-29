@@ -488,42 +488,84 @@
   function extractDescription() {
     const priceRe = /^(PHP|₱)\s*[\d,]+/i;
     const conditionRe = /^(new|used\s*-|for\s*parts)/i;
+    // Lines that look like FB Marketplace structured data, not free-form seller text
+    const structuredLineRe = /^(\[Details\]|Details\s*$|Condition[:\s]|Location[:\s]|Listed\s|Sold\s|Used\s*-|New\s*$|For\s+parts)/i;
+    // UI / chrome / nav lines that should never be treated as the description
+    const uiLineRe = /^(Message|Save|Share|See\s+(translation|more|less|details)|Seller\s+information|Seller\s+details|Similar\s+listings?|Marketplace|Comments?|Buy\s+now|Make\s+offer|Send\s+message|Report|More\s+from|You\s+May)\b/i;
 
-    // Strategy 1: og:description — format varies: price·condition·location·desc OR price·desc
+    const looksLikeDescription = (txt) => {
+      if (!txt) return false;
+      const t = txt.trim();
+      return t.length > 15 &&
+             !priceRe.test(t) &&
+             !structuredLineRe.test(t) &&
+             !uiLineRe.test(t);
+    };
+
+    // Strategy 1: og:description — usually price·condition·location·desc OR
+    // a single newline-joined block. Both cases need structured-line filtering.
     const ogDesc = document.querySelector('meta[property="og:description"]');
     if (ogDesc) {
       const content = ogDesc.getAttribute("content") || "";
       const parts = content.split("·").map(p => p.trim()).filter(Boolean);
 
+      // Try the "·" split path first
       if (parts.length >= 2) {
-        // Remove parts that look like price or known condition labels
-        const descParts = parts.filter(p => !priceRe.test(p) && !conditionRe.test(p));
+        const descParts = parts.filter(p => looksLikeDescription(p));
         if (descParts.length > 0) {
-          const desc = cleanText(descParts.join(" "));
-          if (desc && desc.length > 5) {
-            return { value: desc.slice(0, 3000), confidence: "medium" };
-          }
+          return { value: cleanText(descParts.join(" ")).slice(0, 3000), confidence: "medium" };
         }
-      } else if (parts.length === 1 && !priceRe.test(parts[0]) && parts[0].length > 5) {
-        return { value: parts[0].slice(0, 3000), confidence: "low" };
       }
+
+      // Fall through: try newline-splitting any single content blob
+      const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+      const descLines = lines.filter(looksLikeDescription);
+      if (descLines.length > 0) {
+        return { value: cleanText(descLines.join(' ')).slice(0, 3000), confidence: "medium" };
+      }
+      // Otherwise og:description had nothing useful — continue to body strategies
     }
 
-    // Strategy 2: look for a "Description" heading in visible page text
     const bodyText = document.body.innerText;
-    const idx = bodyText.search(/\bDescription\b/i);
-    if (idx !== -1) {
-      const section = bodyText.slice(idx + "Description".length, idx + 1200).trim();
-      const stopIdx = section.search(
-        /\n(Seller|Condition|Location|Listed|Similar|You May|Message|Marketplace|Comments?)/i
+
+    // Strategy 2: Facebook layout — seller's free-form text sits BETWEEN
+    // "Condition" + value lines and the "See translation" / map / Location block.
+    // We grab a window starting after "Condition" and pull the longest line block
+    // that isn't structured/UI noise.
+    const condIdx = bodyText.search(/\bCondition\b/i);
+    if (condIdx !== -1) {
+      const window = bodyText.slice(condIdx, condIdx + 3000);
+      const stopMatch = window.search(
+        /\n(See\s+translation|See\s+less|Seller\s+information|Seller\s+details|Location\s+is\s+approximate|Similar\s+listings?)\b/i
       );
-      const desc = (stopIdx !== -1 ? section.slice(0, stopIdx) : section).trim();
-      if (desc.length > 5) {
-        return { value: desc.slice(0, 3000), confidence: "medium" };
+      const slice = stopMatch !== -1 ? window.slice(0, stopMatch) : window;
+
+      const candidateLines = slice
+        .split('\n')
+        .map(l => l.trim())
+        .filter(looksLikeDescription);
+
+      if (candidateLines.length > 0) {
+        // Join consecutive description lines — preserves multi-line listings
+        return { value: cleanText(candidateLines.join('\n')).slice(0, 3000), confidence: "high" };
       }
     }
 
-    // Strategy 3: DOM containers with description-related attributes
+    // Strategy 3: explicit "Description" heading anywhere on the page
+    const descIdx = bodyText.search(/\bDescription\b/i);
+    if (descIdx !== -1) {
+      const section = bodyText.slice(descIdx + "Description".length, descIdx + 2000);
+      const lines = section.split('\n').map(l => l.trim());
+      const stopLine = lines.findIndex(l =>
+        /^(Seller\s+information|Similar\s+listings?|You\s+May|Marketplace|Comments?)/i.test(l)
+      );
+      const trimmed = (stopLine !== -1 ? lines.slice(0, stopLine) : lines).filter(looksLikeDescription);
+      if (trimmed.length > 0) {
+        return { value: cleanText(trimmed.join('\n')).slice(0, 3000), confidence: "medium" };
+      }
+    }
+
+    // Strategy 4: DOM containers with description-related attributes
     const descSelectors = [
       '[data-testid*="description"]',
       '[aria-label*="description" i]',
@@ -533,7 +575,7 @@
       const el = document.querySelector(sel);
       if (el) {
         const text = cleanText(el.textContent);
-        if (text && text.length > 10 && !priceRe.test(text) && !conditionRe.test(text)) {
+        if (looksLikeDescription(text)) {
           return { value: text.slice(0, 3000), confidence: "medium" };
         }
       }
