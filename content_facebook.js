@@ -781,14 +781,16 @@
   let fbCollectedComments = [];
   let fbProgressiveIntervalId = null;
   let fbProgressiveAttempts = 0;
+  let fbProgressiveScanData = null; // listing payload used for /analyze/deep on stop
   const FB_MAX_ATTEMPTS = 10;
   const FB_RETRY_MS = 3000;
 
-  function startFacebookProgressiveCollection() {
+  function startFacebookProgressiveCollection(scanData) {
     if (fbProgressiveState === "scanning") return;
     fbProgressiveState = "scanning";
     fbCollectedComments = [];
     fbProgressiveAttempts = 0;
+    if (scanData) fbProgressiveScanData = scanData;
 
     // Scroll toward the comments section to trigger lazy loading
     window.scrollTo({ top: document.body.scrollHeight * 0.6, behavior: "smooth" });
@@ -813,14 +815,57 @@
     }, FB_RETRY_MS);
   }
 
-  function stopFacebookProgressiveCollection() {
+  async function stopFacebookProgressiveCollection() {
     if (fbProgressiveIntervalId) {
       clearInterval(fbProgressiveIntervalId);
       fbProgressiveIntervalId = null;
     }
     fbProgressiveState = "stopped";
+
+    // Call /analyze/deep with collected comments to get bot analysis + flags
+    let riskScore = null, riskLevel = null, fullResult = null;
+    if (fbProgressiveScanData && fbCollectedComments.length > 0) {
+      try {
+        const { accessToken } = await chrome.storage.local.get("accessToken");
+        if (accessToken) {
+          const payload = {
+            listing: fbProgressiveScanData,
+            comments: {
+              platform: fbProgressiveScanData.platform || "facebook",
+              comments: (fbCollectedComments || []).map(r => ({
+                text: r.text || r.comment || "",
+                date: r.date || null,
+                rating_stars: r.rating_stars ?? r.rating ?? null
+              })),
+              page_number: 1,
+              total_pages: 1
+            }
+          };
+          const res = await fetch(`${SURESHOP_API_BASE}/analyze/deep`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${accessToken}`
+            },
+            body: JSON.stringify(payload)
+          });
+          if (res.ok) {
+            fullResult = await res.json();
+            riskScore = fullResult.combined_risk_score ?? fullResult.risk_score ?? null;
+            riskLevel = fullResult.combined_risk_level ?? fullResult.risk_level ?? null;
+          }
+        }
+      } catch (_) { /* network/parse failure — fall through with nulls */ }
+    }
+
     chrome.runtime.sendMessage(
-      { type: "FACEBOOK_PROGRESSIVE_STOPPED", reviews: fbCollectedComments },
+      {
+        type: "FACEBOOK_PROGRESSIVE_STOPPED",
+        reviews: fbCollectedComments,
+        risk_score: riskScore,
+        risk_level: riskLevel,
+        result: fullResult
+      },
       () => { if (chrome.runtime.lastError) {} }
     );
   }
@@ -912,7 +957,7 @@
     }
 
     if (message.type === "START_PROGRESSIVE_COLLECTION") {
-      startFacebookProgressiveCollection();
+      startFacebookProgressiveCollection(message.scanData);
       sendResponse({ started: true });
       return true;
     }
@@ -925,7 +970,7 @@
 
     if (message.type === "FACEBOOK_RESTART_COLLECTION") {
       fbCollectedComments = [];
-      startFacebookProgressiveCollection();
+      startFacebookProgressiveCollection(fbProgressiveScanData);
       sendResponse({ restarted: true });
       return true;
     }

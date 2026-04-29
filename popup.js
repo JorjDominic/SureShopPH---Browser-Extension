@@ -385,10 +385,16 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
         ${missingNote}
       </div>`;
   }
-  // Flags — populate Scan Summary section
+  // Flags — populate Scan Summary section.
+  // /analyze/listing returns flat `flags`; /analyze/deep returns `listing.flags` and `comments.flags`.
+  const summaryFlags = (scanResult?.flags && scanResult.flags.length)
+    ? scanResult.flags
+    : (scanResult?.listing?.flags && scanResult.listing.flags.length)
+      ? scanResult.listing.flags
+      : [];
   let scanSummaryHTML = '';
-  if (scanResult?.flags?.length) {
-    scanSummaryHTML = scanResult.flags
+  if (summaryFlags.length) {
+    scanSummaryHTML = summaryFlags
       .map(f => `<div class="flag-item"><i class="fas fa-exclamation-triangle"></i>${f}</div>`)
       .join('');
   }
@@ -427,6 +433,12 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   if (ca?.reviews_analyzed > 0) {
     const botClass  = ca.bot_likelihood_pct  >= 50 ? 'analysis-high' : ca.bot_likelihood_pct  >= 25 ? 'analysis-medium' : 'analysis-low';
     const fakeClass = ca.fake_review_pct >= 50 ? 'analysis-high' : ca.fake_review_pct >= 25 ? 'analysis-medium' : 'analysis-low';
+    const commentFlags = scanResult?.comments?.flags || [];
+    const commentFlagsHTML = commentFlags.length
+      ? `<div class="bot-analysis-flags">${commentFlags.map(f =>
+          `<div class="flag-item"><i class="fas fa-exclamation-triangle"></i>${String(f).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
+        ).join('')}</div>`
+      : '';
     botAnalysisHTML = `
       <div class="bot-analysis-block">
         <div class="bot-analysis-header"><i class="fas fa-robot"></i> Comment Analysis <span class="analysis-count">${ca.reviews_analyzed} reviewed</span></div>
@@ -440,6 +452,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
             <span class="analysis-badge ${fakeClass}">${ca.fake_review_pct}%</span>
           </div>
         </div>
+        ${commentFlagsHTML}
       </div>`;
   }
 
@@ -756,7 +769,7 @@ function performScan(isAutomatic = false, withReviews = false) {
             if (chrome.runtime.lastError) {
               // Content script not running — inject it then retry once
               chrome.scripting.executeScript(
-                { target: { tabId: currentTab.id }, files: [contentScript] },
+                { target: { tabId: currentTab.id }, files: ["config.js", contentScript] },
                 () => {
                   if (chrome.runtime.lastError) {
                     resolve(null);
@@ -1036,7 +1049,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "SHOPEE_PROGRESSIVE_STOPPED") {
     setActiveCollectionState("stopped");
     const sr = message.risk_score !== undefined && message.risk_level
-      ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastShopeeProductData?.description || null, productData: lastShopeeProductData, result: null }
+      ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastShopeeProductData?.description || null, productData: lastShopeeProductData, result: message.result || null }
       : lastDeepScanInitialResult;
     if (sr) showRiskAssessment(sr.risk_score, sr.risk_level, sr.description, sr.productData, sr.result);
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
@@ -1048,13 +1061,11 @@ chrome.runtime.onMessage.addListener((message) => {
     setActiveCollectionState("scanning");
   }
 
-  // Direct reviews from content script — display immediately then re-scan
-  // with reviews to update risk score and activate comment analysis.
+  // Direct reviews from content script — results are shown only when
+  // collection stops, so we silently ignore mid-scan DIRECT messages.
+  // (The full deep result is forwarded via LAZADA_PROGRESSIVE_STOPPED.)
   if (message.type === "LAZADA_REVIEWS_DIRECT") {
-    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
-      appendReviewsToOutput(message.reviews, true);
-      rescanWithReviews(lastLazadaProductData, message.reviews, 'lazada');
-    }
+    dbg("[Popup] Lazada DIRECT reviews received (collecting, suppressed):", (message.reviews || []).length);
     return;
   }
 
@@ -1068,6 +1079,10 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === "FACEBOOK_PROGRESSIVE_STOPPED") {
     setActiveCollectionState("stopped");
+    const fr = message.risk_score !== undefined && message.risk_score !== null && message.risk_level
+      ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastFacebookProductData?.description || null, productData: lastFacebookProductData, result: message.result || null }
+      : lastDeepScanInitialResult;
+    if (fr) showRiskAssessment(fr.risk_score, fr.risk_level, fr.description, fr.productData, fr.result);
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, false);
     }
@@ -1081,7 +1096,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "LAZADA_PROGRESSIVE_STOPPED") {
     setActiveCollectionState("stopped");
     const lr = message.risk_score !== undefined && message.risk_level
-      ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastLazadaProductData?.description || null, productData: lastLazadaProductData, result: null }
+      ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastLazadaProductData?.description || null, productData: lastLazadaProductData, result: message.result || null }
       : lastDeepScanInitialResult;
     if (lr) showRiskAssessment(lr.risk_score, lr.risk_level, lr.description, lr.productData, lr.result);
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {

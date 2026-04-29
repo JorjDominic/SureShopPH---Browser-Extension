@@ -284,6 +284,7 @@ function showScanCard() {
   let lastKnownCmtidSet = new Set(); // actual cmtid attr values visible in DOM
   let lastProgressiveScore = null;   // most recent score returned by backend
   let lastProgressiveLevel = null;   // most recent level returned by backend
+  let lastProgressiveResult = null;  // most recent full /analyze/deep result
 
   setInterval(() => {
     if (location.href !== lastUrl) {
@@ -298,6 +299,7 @@ function showScanCard() {
       lastKnownCmtidSet = new Set();
       lastProgressiveScore = null;
       lastProgressiveLevel = null;
+      lastProgressiveResult = null;
       checkAndShowCard();
       
       const isProductPage = /-i\.\d+\.\d+/.test(location.href);
@@ -773,7 +775,8 @@ function showScanCard() {
       type: "SHOPEE_PROGRESSIVE_STOPPED",
       reviews: progressiveReviews,
       risk_score: lastProgressiveScore,
-      risk_level: lastProgressiveLevel
+      risk_level: lastProgressiveLevel,
+      result: lastProgressiveResult
     }).catch(() => {});
   }
 
@@ -901,6 +904,7 @@ function showScanCard() {
       // Store latest score/level and update the on-page overlay
       lastProgressiveScore = riskScore;
       lastProgressiveLevel = riskLevel;
+      lastProgressiveResult = result;
       setCardScanningState(riskScore, riskLevel, progressiveReviews.length);
 
       // Persist for popup
@@ -966,6 +970,7 @@ function showScanCard() {
     lastKnownCmtidSet = new Set();
     lastProgressiveScore = null;
     lastProgressiveLevel = null;
+    lastProgressiveResult = null;
     progressiveScanData = scanData;
     progressiveActive = true;
 
@@ -992,7 +997,7 @@ function showScanCard() {
    * showCard=true (default): update overlay to final/stopped state and notify popup.
    * showCard=false: silent stop used for SPA navigation and internal resets.
    */
-  function stopProgressiveCollection(showCard = true) {
+  async function stopProgressiveCollection(showCard = true) {
     const wasActive = progressiveActive;
     progressiveActive = false;
     if (reviewMutationObserver) {
@@ -1001,6 +1006,9 @@ function showScanCard() {
     }
     clearTimeout(progressiveDebounceTimer);
     if (showCard && wasActive) {
+      if (!lastProgressiveResult) {
+        await sendProgressiveUpdate();
+      }
       setCardStoppedState(lastProgressiveScore, lastProgressiveLevel, progressiveReviews.length);
       notifyPopupStopped();
     }

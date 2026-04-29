@@ -1334,6 +1334,7 @@
   let lastKnownReviewCount = 0;     // count of review containers seen in DOM
   let lastProgressiveScore = null;  // most recent score returned by backend
   let lastProgressiveLevel = null;  // most recent level returned by backend
+  let lastProgressiveResult = null; // most recent full /analyze/deep result
 
   setInterval(() => {
     if (location.href !== lastUrl) {
@@ -1348,6 +1349,7 @@
       lastKnownReviewCount = 0;
       lastProgressiveScore = null;
       lastProgressiveLevel = null;
+      lastProgressiveResult = null;
       checkAndShowCard();
 
       chrome.runtime.sendMessage({
@@ -1395,7 +1397,8 @@
       type: "LAZADA_PROGRESSIVE_STOPPED",
       reviews: progressiveReviews,
       risk_score: lastProgressiveScore,
-      risk_level: lastProgressiveLevel
+      risk_level: lastProgressiveLevel,
+      result: lastProgressiveResult
     }).catch(() => {});
   }
 
@@ -1522,6 +1525,7 @@
       // Store latest score/level and update the on-page overlay
       lastProgressiveScore = riskScore;
       lastProgressiveLevel = riskLevel;
+      lastProgressiveResult = result;
       setCardScanningState(riskScore, riskLevel, progressiveReviews.length);
 
       // Persist for popup
@@ -1753,6 +1757,7 @@
     lastKnownReviewCount = 0;
     lastProgressiveScore = null;
     lastProgressiveLevel = null;
+    lastProgressiveResult = null;
     progressiveScanData = scanData;
     progressiveActive = true;
 
@@ -1884,7 +1889,7 @@
    * showCard=true (default): update overlay to final/stopped state and notify popup.
    * showCard=false: silent stop used for SPA navigation and internal resets.
    */
-  function stopProgressiveCollection(showCard = true) {
+  async function stopProgressiveCollection(showCard = true) {
     const wasActive = progressiveActive;
     progressiveActive = false;
     if (reviewMutationObserver) {
@@ -1893,22 +1898,31 @@
     }
     clearTimeout(progressiveDebounceTimer);
     if (showCard && wasActive) {
+      // If we don't have a deep result yet (user stopped before any DOM change
+      // triggered the observer), fetch one now so the popup always receives
+      // the full /analyze/deep payload — including listing flags — even when
+      // there are no comments to analyze.
+      if (!lastProgressiveResult) {
+        await sendProgressiveUpdate();
+      }
       setCardStoppedState(lastProgressiveScore, lastProgressiveLevel, progressiveReviews.length);
       notifyPopupStopped();
     }
   }
-
-  // ===============================
-  // Message Handler
   // ===============================
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     dbg("Lazada content script received message:", message.type);
 
     if (message.type === "EXTRACT_DATA") {
       dbg("Lazada: handling EXTRACT_DATA");
-      const data = extractLazadaData();
-      dbg("Lazada extracted data:", data);
-      sendResponse(data);
+      try {
+        const data = extractLazadaData();
+        dbg("Lazada extracted data:", data);
+        sendResponse(data);
+      } catch (e) {
+        dbgErr("Lazada extraction failed:", e && e.message);
+        sendResponse({ success: false, error: (e && e.message) || "Extraction failed" });
+      }
       return true;
     }
 
