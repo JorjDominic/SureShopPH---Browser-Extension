@@ -13,9 +13,9 @@
   dbg("ScamGuard content_lazada.js loaded (Lazada)", IS_IFRAME ? "[iframe]" : "[main]");
 
   // ===============================
-  // API Base (mirrors popup.js)
+  // API Base — SURESHOP_API_BASE is provided by config.js
+  // (listed first in manifest.json content_scripts).
   // ===============================
-  const SURESHOP_API_BASE = "http://localhost:8000";
 
   // Lazada product page detection:
   // e.g. https://www.lazada.com.ph/products/name-i123456-s654321.html
@@ -1491,7 +1491,19 @@
     if (!accessToken) return;
 
     try {
-      const payload = { ...progressiveScanData, reviews: progressiveReviews };
+      const payload = {
+        listing: progressiveScanData,
+        comments: {
+          platform: progressiveScanData.platform || "lazada",
+          comments: (progressiveReviews || []).map(r => ({
+            text: r.text || r.comment || "",
+            date: r.date || null,
+            rating_stars: r.rating_stars ?? r.rating ?? null
+          })),
+          page_number: 1,
+          total_pages: 1
+        }
+      };
       const res = await fetch(`${SURESHOP_API_BASE}/analyze/deep`, {
         method: "POST",
         headers: {
@@ -1503,19 +1515,21 @@
       if (!res.ok) return;
 
       const result = await res.json();
-      if (result.risk_score === undefined) return;
+      const riskScore = result.combined_risk_score ?? result.risk_score;
+      const riskLevel = result.combined_risk_level ?? result.risk_level;
+      if (riskScore === undefined) return;
 
       // Store latest score/level and update the on-page overlay
-      lastProgressiveScore = result.risk_score;
-      lastProgressiveLevel = result.risk_level;
-      setCardScanningState(result.risk_score, result.risk_level, progressiveReviews.length);
+      lastProgressiveScore = riskScore;
+      lastProgressiveLevel = riskLevel;
+      setCardScanningState(riskScore, riskLevel, progressiveReviews.length);
 
       // Persist for popup
       await chrome.storage.local.set({
         lastAutoScanResult: {
           type: "product",
-          risk_score: result.risk_score,
-          risk_level: result.risk_level,
+          risk_score: riskScore,
+          risk_level: riskLevel,
           description: progressiveScanData.description || null,
           timestamp: Date.now(),
           url: location.href
@@ -1525,8 +1539,8 @@
       // Notify popup if it is currently open
       chrome.runtime.sendMessage({
         type: "LAZADA_SCAN_UPDATED",
-        risk_score: result.risk_score,
-        risk_level: result.risk_level,
+        risk_score: riskScore,
+        risk_level: riskLevel,
         reviews: progressiveReviews
       }).catch(() => { /* popup may not be open */ });
 

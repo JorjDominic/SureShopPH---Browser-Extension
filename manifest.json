@@ -40,18 +40,18 @@
   "content_scripts": [
     {
       "matches": ["https://*.shopee.ph/*"],
-      "js": ["content.js"],
+      "js": ["config.js", "content.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://*.lazada.com.ph/*"],
-      "js": ["content_lazada.js"],
+      "js": ["config.js", "content_lazada.js"],
       "run_at": "document_idle",
       "all_frames": true
     },
     {
       "matches": ["https://*.facebook.com/marketplace/*"],
-      "js": ["content_facebook.js"],
+      "js": ["config.js", "content_facebook.js"],
       "run_at": "document_idle"
     },
     {
@@ -68,7 +68,7 @@
         "https://*.kimstore.com/*",
         "https://*.galleon.ph/*"
       ],
-      "js": ["universal_content.js"],
+      "js": ["config.js", "universal_content.js"],
       "run_at": "document_idle"
     }
   ],

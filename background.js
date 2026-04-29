@@ -1,8 +1,8 @@
 // -----------------------------------------------------------------------
-// API base URL — update this to your production HTTPS endpoint before
-// submitting to the Chrome Web Store. HTTP localhost is only for local dev.
+// API base URL is defined in config.js (loaded via importScripts).
+// Update there before submitting to the Chrome Web Store.
 // -----------------------------------------------------------------------
-const SURESHOP_API_BASE = "http://localhost:8000";
+importScripts('config.js');
 
 // -----------------------------------------------------------------------
 // Supported shopping platform domains. URL auto-scan is restricted to

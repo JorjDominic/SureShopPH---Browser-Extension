@@ -7,10 +7,9 @@ const dbg = (...args) => { if (DEBUG) console.log(...args); };
 const dbgErr = (...args) => { if (DEBUG) console.error(...args); };
 
 // -----------------------------------------------------------------------
-// API base URL — update this to your production HTTPS endpoint before
-// submitting to the Chrome Web Store. HTTP localhost is only for local dev.
+// API base URL is defined in config.js (loaded by popup.html before popup.js).
 // -----------------------------------------------------------------------
-const SURESHOP_API_BASE = "http://localhost:8000";
+// SURESHOP_API_BASE comes from config.js
 
 // -----------------------------------------------------------------------
 // Supported shopping platforms (keep in sync with manifest.json)
@@ -77,6 +76,7 @@ const activationMessage = document.getElementById("activationMessage");
 let lastShopeeProductData = null;
 let lastLazadaProductData = null;
 let lastFacebookProductData = null;
+let lastDeepScanInitialResult = null; // initial /analyze/listing result; shown on Stop if progressive scan has no score
 let progressiveState     = "idle"; // controls commentsBtn (Deep Scan)
 let commentOnlyState     = "idle"; // controls commentOnlyBtn (Scan Comments)
 
@@ -235,10 +235,18 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo) => {
 
 
 // Handle activation key submission
+const ACTIVATION_KEY_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+
 activateBtn.addEventListener("click", async () => {
-  const key = activationKeyInput?.value.trim();
+  const rawKey = activationKeyInput?.value || "";
+  const key = rawKey.trim().toUpperCase();
   if (!key) {
     showActivationMessage("Please enter your activation key.");
+    activationKeyInput?.focus();
+    return;
+  }
+  if (!ACTIVATION_KEY_RE.test(key)) {
+    showActivationMessage("Activation key must be in the format XXXX-XXXX-XXXX-XXXX-XXXX (uppercase letters and digits).");
     activationKeyInput?.focus();
     return;
   }
@@ -258,31 +266,28 @@ activateBtn.addEventListener("click", async () => {
     }
 
     if (!res.ok) {
-      // Backend unavailable (e.g. endpoint not yet built) — store the raw key
-      // as a local token so the extension stays usable during development.
-      // Once /activate is live it will return a proper JWT instead.
-      await chrome.storage.local.set({ accessToken: key, activatedAt: Date.now() });
-      activationSection.style.display = "none";
-      scanSection.style.display = "block";
-      refreshPageStatus();
+      // Surface the real backend error rather than silently storing a fake token.
+      let detail = "";
+      try { detail = (await res.json())?.detail || ""; } catch (_) {}
+      showActivationMessage(`Activation failed (${res.status})${detail ? ": " + detail : "."}`);
       return;
     }
 
     const data = await res.json();
-    const token = data.access_token || key;
-    await chrome.storage.local.set({ accessToken: token, activatedAt: Date.now() });
+    if (!data?.access_token) {
+      showActivationMessage("Activation succeeded but no token was returned. Please try again.");
+      return;
+    }
+    await chrome.storage.local.set({ accessToken: data.access_token, activatedAt: Date.now() });
 
     activationSection.style.display = "none";
     scanSection.style.display = "block";
     refreshPageStatus();
   } catch (error) {
-    // Network error (backend unreachable) — store the raw key locally so the
-    // extension stays usable during development without a running server.
+    // Network error — keep the user on the activation screen instead of storing
+    // a non-JWT raw key, which would break every authenticated request later.
     dbgErr("Activation error:", error);
-    await chrome.storage.local.set({ accessToken: key, activatedAt: Date.now() });
-    activationSection.style.display = "none";
-    scanSection.style.display = "block";
-    refreshPageStatus();
+    showActivationMessage("Cannot reach the SureShop server. Check your connection and try again.");
   } finally {
     activateBtn.textContent = "Activate";
     activateBtn.disabled = false;
@@ -411,8 +416,15 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
 
   // Bot / Fake Review Analysis — only shown when reviews were actually analyzed
   let botAnalysisHTML = '';
-  if (scanResult?.comment_analysis?.reviews_analyzed > 0) {
-    const ca = scanResult.comment_analysis;
+  // Backend /analyze/deep returns `comments` with `comments_analyzed`.
+  // Older code paths used `comment_analysis` with `reviews_analyzed`. Support both.
+  const ca = scanResult?.comment_analysis
+    ?? (scanResult?.comments ? {
+          reviews_analyzed: scanResult.comments.comments_analyzed,
+          bot_likelihood_pct: scanResult.comments.bot_likelihood_pct,
+          fake_review_pct: scanResult.comments.fake_review_pct,
+        } : null);
+  if (ca?.reviews_analyzed > 0) {
     const botClass  = ca.bot_likelihood_pct  >= 50 ? 'analysis-high' : ca.bot_likelihood_pct  >= 25 ? 'analysis-medium' : 'analysis-low';
     const fakeClass = ca.fake_review_pct >= 50 ? 'analysis-high' : ca.fake_review_pct >= 25 ? 'analysis-medium' : 'analysis-low';
     botAnalysisHTML = `
@@ -629,16 +641,13 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
         chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
           const { accessToken } = await chrome.storage.local.get('accessToken');
           const payload = {
-            url: tabs[0]?.url || '',
-            platform: productData?.platform || 'unknown',
-            risk_score: riskScore,
-            risk_level: riskLevel,
-            reason,
-            details: details || null
+            listing_url: tabs[0]?.url || '',
+            report_type: reason,
+            description: details || null
           };
 
           try {
-            const res = await fetch(`${SURESHOP_API_BASE}/report/listing`, {
+            const res = await fetch(`${SURESHOP_API_BASE}/reports`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -889,70 +898,35 @@ function performScan(isAutomatic = false, withReviews = false) {
 
           await chrome.storage.local.set(storageData);
 
-          // Show results — pass full backend result so risk_message, confidence,
-          // flags, product_notice and comment_analysis are all used
-          showRiskAssessment(result.risk_score, result.risk_level, response.description || null, productData, result);
+          if (!withReviews) {
+            // Normal scan: show result immediately
+            showRiskAssessment(result.risk_score, result.risk_level, response.description || null, productData, result);
+          } else {
+            // Deep Scan: store initial result and only show it when collection stops
+            lastDeepScanInitialResult = { risk_score: result.risk_score, risk_level: result.risk_level, description: response.description || null, productData, result };
 
-          // Deep Scan: append reviews after risk card
-          if (withReviews) {
             const isShopee = currentTab.url.includes("shopee.ph");
             const isLazada = currentTab.url.includes("lazada.com.ph");
             const isFacebook = currentTab.url.includes("facebook.com") &&
                                /\/marketplace\/item\/\d+/.test(currentTab.url);
 
             if (isShopee) {
-              // -------------------------------------------------------
-              // Progressive collection: start the MutationObserver in
-              // the content script and show whatever is visible now.
-              // The observer fires automatically whenever the user
-              // navigates to a new comment page.
-              // -------------------------------------------------------
               chrome.tabs.sendMessage(
                 currentTab.id,
                 { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
-                () => {
-          setCommentsButtonState("scanning");
-        // Small delay to let initial harvest complete, then show
-        setTimeout(() => {
-                    chrome.tabs.sendMessage(
-                      currentTab.id,
-                      { type: "GET_PROGRESSIVE_REVIEWS" },
-                      (r) => appendReviewsToOutput(r?.reviews || [], false)
-                    );
-                  }, 400);
-                }
+                () => { setCommentsButtonState("scanning"); }
               );
             } else if (isLazada) {
-              // Progressive collection for Lazada — same pattern as Shopee
               chrome.tabs.sendMessage(
                 currentTab.id,
                 { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
-                () => {
-                  setCommentsButtonState("scanning");
-                  setTimeout(() => {
-                    chrome.tabs.sendMessage(
-                      currentTab.id,
-                      { type: "GET_PROGRESSIVE_REVIEWS" },
-                      (r) => appendReviewsToOutput(r?.reviews || [], true)
-                    );
-                  }, 600);
-                }
+                () => { setCommentsButtonState("scanning"); }
               );
             } else if (isFacebook) {
-              // Progressive collection for Facebook — same pattern as Lazada
               chrome.tabs.sendMessage(
                 currentTab.id,
                 { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
-                () => {
-                  setCommentsButtonState("scanning");
-                  setTimeout(() => {
-                    chrome.tabs.sendMessage(
-                      currentTab.id,
-                      { type: "GET_PROGRESSIVE_REVIEWS" },
-                      (r) => appendReviewsToOutput(r?.reviews || [], false)
-                    );
-                  }, 600);
-                }
+                () => { setCommentsButtonState("scanning"); }
               );
             }
           }
@@ -1012,7 +986,19 @@ async function rescanWithReviews(productData, reviews, platformKey) {
   if (!accessToken) return;
 
   try {
-    const payload = { ...productData, reviews };
+    const payload = {
+      listing: productData,
+      comments: {
+        platform: productData.platform || platformKey,
+        comments: (reviews || []).map(r => ({
+          text: r.text || r.comment || '',
+          date: r.date || null,
+          rating_stars: r.rating_stars ?? r.rating ?? null
+        })),
+        page_number: 1,
+        total_pages: 1
+      }
+    };
     const resp = await fetch(`${SURESHOP_API_BASE}/analyze/deep`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
@@ -1020,9 +1006,11 @@ async function rescanWithReviews(productData, reviews, platformKey) {
     });
     if (!resp.ok) return;
     const result = await resp.json();
-    if (result.risk_score !== undefined && result.risk_level !== undefined) {
+    const riskScore = result.combined_risk_score ?? result.risk_score;
+    const riskLevel = result.combined_risk_level ?? result.risk_level;
+    if (riskScore !== undefined && riskLevel !== undefined) {
       const cachedData = platformKey === 'lazada' ? lastLazadaProductData : lastFacebookProductData;
-      showRiskAssessment(result.risk_score, result.risk_level, cachedData?.description || null, cachedData, result);
+      showRiskAssessment(riskScore, riskLevel, cachedData?.description || null, cachedData, result);
     }
   } catch (_) {}
 }
@@ -1041,20 +1029,18 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "SHOPEE_SCAN_UPDATED") {
-    dbg("[Popup] Progressive update:", message.risk_score, message.risk_level);
-    showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null, lastShopeeProductData);
-    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
-      appendReviewsToOutput(message.reviews, false);
-    }
+    dbg("[Popup] Progressive update (collecting):", message.risk_score, message.risk_level);
+    // Results are shown only when collection stops — don't update the card mid-scan.
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_STOPPED") {
     setActiveCollectionState("stopped");
+    const sr = message.risk_score !== undefined && message.risk_level
+      ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastShopeeProductData?.description || null, productData: lastShopeeProductData, result: null }
+      : lastDeepScanInitialResult;
+    if (sr) showRiskAssessment(sr.risk_score, sr.risk_level, sr.description, sr.productData, sr.result);
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, false);
-    }
-    if (message.risk_score !== undefined && message.risk_level) {
-      showRiskAssessment(message.risk_score, message.risk_level, lastShopeeProductData?.description || null, lastShopeeProductData);
     }
   }
 
@@ -1088,20 +1074,18 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "LAZADA_SCAN_UPDATED") {
-    dbg("[Popup] Lazada progressive update:", message.risk_score, message.risk_level);
-    showRiskAssessment(message.risk_score, message.risk_level, lastLazadaProductData?.description || null, lastLazadaProductData);
-    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
-      appendReviewsToOutput(message.reviews, true);
-    }
+    dbg("[Popup] Lazada progressive update (collecting):", message.risk_score, message.risk_level);
+    // Results are shown only when collection stops — don't update the card mid-scan.
   }
 
   if (message.type === "LAZADA_PROGRESSIVE_STOPPED") {
     setActiveCollectionState("stopped");
+    const lr = message.risk_score !== undefined && message.risk_level
+      ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastLazadaProductData?.description || null, productData: lastLazadaProductData, result: null }
+      : lastDeepScanInitialResult;
+    if (lr) showRiskAssessment(lr.risk_score, lr.risk_level, lr.description, lr.productData, lr.result);
     if (Array.isArray(message.reviews) && message.reviews.length > 0) {
       appendReviewsToOutput(message.reviews, true);
-    }
-    if (message.risk_score !== undefined && message.risk_level) {
-      showRiskAssessment(message.risk_score, message.risk_level, lastLazadaProductData?.description || null, lastLazadaProductData);
     }
   }
 
