@@ -1,0 +1,11 @@
+{
+  "extName":        { "message": "SureShopPH - Online Shopping Risk Detection" },
+  "extDescription": { "message": "Helps protect Filipino online shoppers from scams. Scans Shopee, Lazada, and Facebook Marketplace product listings on demand and checks URLs of supported shopping sites for known phishing and fraud indicators." },
+  "actionTitle":    { "message": "SureShop - Scan for scams" },
+  "scan":           { "message": "Scan" },
+  "history":        { "message": "History" },
+  "settings":       { "message": "Settings" },
+  "about":          { "message": "About" },
+  "openSureShop":   { "message": "Open SureShop side panel" },
+  "scanLink":       { "message": "Scan this link with SureShop" }
+}

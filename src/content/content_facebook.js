@@ -257,7 +257,7 @@
       const faLink = document.createElement('link');
       faLink.id = 'sureshop-fa-css';
       faLink.rel = 'stylesheet';
-      faLink.href = chrome.runtime.getURL('fonts/fa/fa-solid-combined.css');
+      faLink.href = chrome.runtime.getURL('assets/fonts/fa/fa-solid-combined.css');
       document.head.appendChild(faLink);
     }
     document.head.appendChild(style);
@@ -485,6 +485,68 @@
     return { value: null, confidence: "low" };
   }
 
+  // ===============================
+  // Seller Rating Extractor (Facebook)
+  // ===============================
+  function extractSellerRating() {
+    const bodyText = document.body.innerText;
+
+    // Pattern 1: "X.X/5 (Y ratings)" or "X.X out of 5"
+    const starMatch = bodyText.match(/(\d(?:\.\d)?)\s*\/\s*5\s*(?:\(.*?rating|\d+\s*rating)/i)
+      || bodyText.match(/(\d(?:\.\d)?)\s+out\s+of\s+5/i);
+    if (starMatch) {
+      const v = parseFloat(starMatch[1]);
+      if (v >= 0 && v <= 5) return { value: `${v} / 5`, confidence: 'high' };
+    }
+
+    // Pattern 2: seller profile shows a plain "X.X" star rating near the name
+    // Facebook shows this in the seller info section as e.g. "4.9  (73 ratings)"
+    const ratingBlock = bodyText.match(/([1-5](?:\.\d)?)\s*\(?(\d+)\s*ratings?\)?/i);
+    if (ratingBlock) {
+      const v = parseFloat(ratingBlock[1]);
+      if (v >= 1 && v <= 5) return { value: `${v} / 5 (${ratingBlock[2]} ratings)`, confidence: 'medium' };
+    }
+
+    // Pattern 3: "Joined" line immediately precedes a rating in some layouts
+    const joinedIdx = bodyText.search(/\bJoined\s+\w+\b/i);
+    if (joinedIdx !== -1) {
+      const nearby = bodyText.slice(joinedIdx, joinedIdx + 200);
+      const nearMatch = nearby.match(/([1-5](?:\.\d)?)\s*\/\s*5/i);
+      if (nearMatch) {
+        const v = parseFloat(nearMatch[1]);
+        if (v >= 0 && v <= 5) return { value: `${v} / 5`, confidence: 'medium' };
+      }
+    }
+
+    return { value: null, confidence: 'low' };
+  }
+
+  // ===============================
+  // Vehicle / Item Attributes Extractor
+  // ===============================
+  function extractVehicleAttributes() {
+    const bodyText = document.body.innerText;
+
+    // Matches "About this vehicle", "About this item", "About this listing"
+    const headingMatch = bodyText.match(/\bAbout\s+this\s+(vehicle|item|listing|product)\b/i);
+    if (!headingMatch) return null;
+
+    const start = headingMatch.index + headingMatch[0].length;
+    const section = bodyText.slice(start, start + 1500);
+
+    // Stop when a new section heading appears
+    const stopRe = /\n(Seller[\u2019']?s?\s+description|Seller\s+details|Seller\s+information|Comments?|Similar\s+listings?|Message|See\s+less)\b/i;
+    const stopIdx = section.search(stopRe);
+    const slice = (stopIdx !== -1 ? section.slice(0, stopIdx) : section).trim();
+
+    const lines = slice
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 2 && !/^(See\s+(more|less)|Details?|\[Details\])$/i.test(l));
+
+    return lines.length > 0 ? lines : null;
+  }
+
   function extractDescription() {
     const priceRe = /^(PHP|₱)\s*[\d,]+/i;
     const conditionRe = /^(new|used\s*-|for\s*parts)/i;
@@ -585,103 +647,6 @@
   }
 
   // ===============================
-  // Comments Extractor (Facebook Marketplace)
-  // ===============================
-  function extractFacebookComments(maxComments = 10) {
-    const comments = [];
-
-    // Strategy 1: DOM — find comment articles inside a comments section
-    const commentWrappers = [...document.querySelectorAll(
-      '[aria-label*="comment" i], [aria-label*="Comment" i]'
-    )].filter(el => el.tagName !== 'BUTTON' && el.querySelectorAll('[role="article"]').length > 0);
-
-    if (commentWrappers.length > 0) {
-      const articles = [...commentWrappers[0].querySelectorAll('[role="article"]')].slice(0, maxComments * 2);
-      for (const article of articles) {
-        // Skip seller/seller-response articles
-        const ariaLabel = (article.getAttribute('aria-label') || "").toLowerCase();
-        if (/seller|response from seller/i.test(ariaLabel)) continue;
-
-        // Username: first link or strong inside the comment
-        const nameEl = article.querySelector(
-          'a[href*="/user/"] strong, a[href*="profile.php"] strong, a[href*="/user/"], strong'
-        );
-        const username = nameEl ? cleanText(nameEl.textContent) : null;
-
-        // Skip if the comment text starts with seller-response indicators
-        const allLeafTexts = [...article.querySelectorAll('*')]
-          .filter(el => el.childElementCount === 0)
-          .map(el => cleanText(el.textContent))
-          .filter(Boolean);
-
-        const isSellerReply = allLeafTexts.some(t =>
-          /^(Seller['']?s?\s*(Reply|Response)|Response\s+from\s+Seller)/i.test(t)
-        );
-        if (isSellerReply) continue;
-
-        // Comment text: longest meaningful leaf
-        const text = allLeafTexts
-          .filter(t =>
-            t && t !== username && t.length > 3 &&
-            !/^(\d+|just now|\d+\s*(min|hr|h|hour|day|week|month|year)s?\s*(ago)?|Like|Reply|See more)$/i.test(t)
-          )
-          .sort((a, b) => b.length - a.length)[0] || null;
-
-        if (text && comments.length < maxComments) {
-          comments.push({ username: username || "Anonymous", rating_stars: null, text, date: null, variant: null });
-        }
-      }
-      if (comments.length > 0) return { value: comments, confidence: "high" };
-    }
-
-    // Strategy 2: innerText parsing — find "Comments" section and parse lines
-    const bodyText = document.body.innerText;
-    const idx = bodyText.search(/\bComments?\b/);
-    if (idx !== -1) {
-      const section = bodyText.slice(idx, idx + 6000);
-      const lines = section.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-
-      let i = 1; // skip "Comments" header line
-      let inSellerResponse = false;
-      while (i < lines.length && comments.length < maxComments) {
-        const line = lines[i];
-
-        // Detect and skip seller response blocks
-        if (/^(Seller['']?s?\s*(Reply|Response)|Response\s+from\s+Seller)/i.test(line)) {
-          inSellerResponse = true; i++; continue;
-        }
-        // End of seller response block when we hit a new short username-like line
-        if (inSellerResponse && line.length <= 60 &&
-            !/^(just now|\d+\s*(min|hr|h|hour|day|week|month|year)s?|Like|Reply)/i.test(line)) {
-          inSellerResponse = false;
-        }
-        if (inSellerResponse) { i++; continue; }
-
-        // Skip known meta/UI lines
-        if (/^(\d+\s+Comment|See\s+all|Most\s+Relevant|Load\s+more|Like|Reply|Write\s+a|Add\s+a)/i.test(line)) { i++; continue; }
-        if (/^\d+$/.test(line) || line.length < 3) { i++; continue; }
-        if (/^(just now|\d+\s*(min|hr|h|hour|day|week|month|year)s?\s*(ago)?|[A-Z][a-z]+ \d+)$/i.test(line)) { i++; continue; }
-
-        // Short line (<= 60 chars) followed by a longer comment line
-        if (line.length <= 60 && i + 1 < lines.length) {
-          const nextLine = lines[i + 1];
-          if (
-            nextLine && nextLine.length > 5 &&
-            !/^(\d+\s+Comment|Like|Reply|Write|Add|just now|\d+\s*(min|hr|h|hour|day|week|month)s?)/i.test(nextLine)
-          ) {
-            comments.push({ username: line, rating_stars: null, text: nextLine, date: null, variant: null });
-            i += 2;
-            continue;
-          }
-        }
-        i++;
-      }
-    }
-
-    return { value: comments, confidence: comments.length > 0 ? "medium" : "low" };
-  }
-
-  // ===============================
   // Data Validation & Quality Report
   // ===============================
   function sanitizeData(raw, platform) {
@@ -712,7 +677,7 @@
     const TRACKED = {
       shopee:   ['price','sold_count','rating','rating_count','response_rate','shop_age','seller_name','description','image_count'],
       lazada:   ['price','sold_count','rating','rating_count','seller_name','seller_rating','description','image_count'],
-      facebook: ['price','seller_name','condition','location','listing_date','description','image_count'],
+      facebook: ['price','seller_name','seller_rating','condition','location','listing_date','description','image_count'],
     };
     const missing = (TRACKED[platform] || []).filter(f => {
       const v = d[f];
@@ -731,10 +696,12 @@
       const productName = extractProductName();
       const price = extractPrice();
       const sellerName = extractSellerName();
+      const sellerRating = extractSellerRating();
       const condition = extractCondition();
       const locationInfo = extractLocation();
       const listingDate = extractListingDate();
       const description = extractDescription();
+      const vehicleAttrs = extractVehicleAttributes();
       const imageCount = extractImageCount();
 
       // Build a details prefix from structured fields and prepend to description
@@ -742,9 +709,12 @@
       if (condition.value) detailLines.push(`Condition: ${condition.value}`);
       if (locationInfo.value) detailLines.push(`Location: ${locationInfo.value}`);
       if (listingDate.value) detailLines.push(`Listed: ${listingDate.value}`);
-      const detailsPrefix = detailLines.length > 0
+      let detailsPrefix = detailLines.length > 0
         ? `[Details]\n${detailLines.join("\n")}\n\n`
         : "";
+      if (vehicleAttrs && vehicleAttrs.length > 0) {
+        detailsPrefix += `[About this listing]\n${vehicleAttrs.join("\n")}\n\n`;
+      }
       const fullDescription = detailsPrefix + (description.value || "");
 
       return sanitizeData({
@@ -754,6 +724,7 @@
         price: price.value,
         price_is_variant: price.variant || false,
         seller_name: sellerName.value,
+        seller_rating: sellerRating.value,
         condition: condition.value,
         location: locationInfo.value,
         listing_date: listingDate.value,
@@ -763,7 +734,6 @@
         sold_count: null,
         rating: null,
         rating_count: null,
-        seller_rating: null,
         response_rate: null,
         listing_url: window.location.href,
         extracted_at: new Date().toISOString()
@@ -772,102 +742,6 @@
       dbgErr("extractFacebookData error:", err);
       return { success: false, error: err.message };
     }
-  }
-
-  // ===============================
-  // Progressive Comment Collection
-  // ===============================
-  let fbProgressiveState = "idle"; // "idle" | "scanning" | "stopped"
-  let fbCollectedComments = [];
-  let fbProgressiveIntervalId = null;
-  let fbProgressiveAttempts = 0;
-  let fbProgressiveScanData = null; // listing payload used for /analyze/deep on stop
-  const FB_MAX_ATTEMPTS = 10;
-  const FB_RETRY_MS = 3000;
-
-  function startFacebookProgressiveCollection(scanData) {
-    if (fbProgressiveState === "scanning") return;
-    fbProgressiveState = "scanning";
-    fbCollectedComments = [];
-    fbProgressiveAttempts = 0;
-    if (scanData) fbProgressiveScanData = scanData;
-
-    // Scroll toward the comments section to trigger lazy loading
-    window.scrollTo({ top: document.body.scrollHeight * 0.6, behavior: "smooth" });
-
-    // Immediately tell popup we're scanning (shows spinner)
-    chrome.runtime.sendMessage({ type: "FACEBOOK_REVIEWS_DIRECT", reviews: [] },
-      () => { if (chrome.runtime.lastError) {} });
-
-    fbProgressiveIntervalId = setInterval(() => {
-      fbProgressiveAttempts++;
-      try {
-        const result = extractFacebookComments(20);
-        if (result.value.length > fbCollectedComments.length) {
-          fbCollectedComments = result.value;
-          chrome.runtime.sendMessage(
-            { type: "FACEBOOK_REVIEWS_DIRECT", reviews: fbCollectedComments },
-            () => { if (chrome.runtime.lastError) {} }
-          );
-        }
-      } catch (_) {}
-      if (fbProgressiveAttempts >= FB_MAX_ATTEMPTS) stopFacebookProgressiveCollection();
-    }, FB_RETRY_MS);
-  }
-
-  async function stopFacebookProgressiveCollection() {
-    if (fbProgressiveIntervalId) {
-      clearInterval(fbProgressiveIntervalId);
-      fbProgressiveIntervalId = null;
-    }
-    fbProgressiveState = "stopped";
-
-    // Call /analyze/deep with collected comments to get bot analysis + flags
-    let riskScore = null, riskLevel = null, fullResult = null;
-    if (fbProgressiveScanData && fbCollectedComments.length > 0) {
-      try {
-        const { accessToken } = await chrome.storage.local.get("accessToken");
-        if (accessToken) {
-          const payload = {
-            listing: fbProgressiveScanData,
-            comments: {
-              platform: fbProgressiveScanData.platform || "facebook",
-              comments: (fbCollectedComments || []).map(r => ({
-                text: r.text || r.comment || "",
-                date: r.date || null,
-                rating_stars: r.rating_stars ?? r.rating ?? null
-              })),
-              page_number: 1,
-              total_pages: 1
-            }
-          };
-          const res = await fetch(`${SURESHOP_API_BASE}/analyze/deep`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${accessToken}`
-            },
-            body: JSON.stringify(payload)
-          });
-          if (res.ok) {
-            fullResult = await res.json();
-            riskScore = fullResult.combined_risk_score ?? fullResult.risk_score ?? null;
-            riskLevel = fullResult.combined_risk_level ?? fullResult.risk_level ?? null;
-          }
-        }
-      } catch (_) { /* network/parse failure — fall through with nulls */ }
-    }
-
-    chrome.runtime.sendMessage(
-      {
-        type: "FACEBOOK_PROGRESSIVE_STOPPED",
-        reviews: fbCollectedComments,
-        risk_score: riskScore,
-        risk_level: riskLevel,
-        result: fullResult
-      },
-      () => { if (chrome.runtime.lastError) {} }
-    );
   }
 
   // ===============================
@@ -905,9 +779,6 @@
     dbg("Facebook URL changed (SPA):", lastUrl, "→", location.href);
     lastUrl = location.href;
     dataStale = true;
-
-    // Stop any in-progress collection on navigation
-    if (fbProgressiveState === "scanning") stopFacebookProgressiveCollection();
 
     // Remove scan card if we've left a listing page
     if (!isListingPage()) {
@@ -947,36 +818,13 @@
     }
 
     if (message.type === "EXTRACT_REVIEWS") {
-      try {
-        const comments = extractFacebookComments(10);
-        sendResponse({ reviews: comments.value });
-      } catch (_) {
-        sendResponse({ reviews: [] });
-      }
-      return true;
-    }
-
-    if (message.type === "START_PROGRESSIVE_COLLECTION") {
-      startFacebookProgressiveCollection(message.scanData);
-      sendResponse({ started: true });
-      return true;
-    }
-
-    if (message.type === "STOP_PROGRESSIVE_COLLECTION") {
-      stopFacebookProgressiveCollection();
-      sendResponse({ stopped: true });
-      return true;
-    }
-
-    if (message.type === "FACEBOOK_RESTART_COLLECTION") {
-      fbCollectedComments = [];
-      startFacebookProgressiveCollection(fbProgressiveScanData);
-      sendResponse({ restarted: true });
+      // Comment collection removed — Facebook Marketplace rarely has public comments
+      sendResponse({ reviews: [] });
       return true;
     }
 
     if (message.type === "GET_PROGRESSIVE_REVIEWS") {
-      sendResponse({ reviews: fbCollectedComments });
+      sendResponse({ reviews: [] });
       return true;
     }
 

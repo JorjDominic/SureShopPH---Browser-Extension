@@ -77,8 +77,42 @@ let lastShopeeProductData = null;
 let lastLazadaProductData = null;
 let lastFacebookProductData = null;
 let lastDeepScanInitialResult = null; // initial /analyze/listing result; shown on Stop if progressive scan has no score
+let lastShopeeReviews = [];
+let lastLazadaReviews = [];
 let progressiveState     = "idle"; // controls commentsBtn (Deep Scan)
 let commentOnlyState     = "idle"; // controls commentOnlyBtn (Scan Comments)
+let collectingPollInterval = null; // polls review count from content script while scanning
+
+function startCollectingPoll() {
+  stopCollectingPoll();
+  collectingPollInterval = setInterval(() => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs[0]) return;
+      chrome.tabs.sendMessage(tabs[0].id, { type: "GET_PROGRESSIVE_REVIEWS" }, (r) => {
+        if (chrome.runtime.lastError || !r) return;
+        const count = (r.reviews || []).length;
+        const panel = output.querySelector('.collecting-panel');
+        if (panel) {
+          const countEl = panel.querySelector('.collecting-count');
+          if (countEl) countEl.textContent = `${count} review${count !== 1 ? 's' : ''} collected`;
+        }
+        if (progressiveState === "scanning") {
+          commentsBtn.innerHTML = `<i class="fas fa-stop"></i> Stop Collecting (${count})`;
+        }
+        if (commentOnlyState === "scanning") {
+          commentOnlyBtn.innerHTML = `<i class="fas fa-stop"></i> Stop Collecting (${count})`;
+        }
+      });
+    });
+  }, 600);
+}
+
+function stopCollectingPoll() {
+  if (collectingPollInterval) {
+    clearInterval(collectingPollInterval);
+    collectingPollInterval = null;
+  }
+}
 
 function showActivationMessage(text, isError = true) {
   activationMessage.textContent = text;
@@ -166,11 +200,15 @@ function refreshPageStatus() {
 
     if (platform.fullScan) {
       if (platform.isProduct) {
+        const isFbProduct = platform.key === 'facebook';
         banner.className = "page-status page-status--supported";
         banner.innerHTML = `<i class="fas fa-check-circle"></i><span><strong>${platform.label}</strong> product detected — ready to scan</span>`;
         scanBtn && (scanBtn.disabled = false);
-        commentsBtn && (commentsBtn.disabled = false);
-        commentOnlyBtn && (commentOnlyBtn.disabled = false);
+        // Deep Scan and Scan Comments are Shopee/Lazada only
+        commentsBtn && (commentsBtn.disabled = isFbProduct ? true : false);
+        commentOnlyBtn && (commentOnlyBtn.disabled = isFbProduct ? true : false);
+        if (isFbProduct && commentsBtn) commentsBtn.title = 'Comment scan not available on Facebook Marketplace';
+        if (isFbProduct && commentOnlyBtn) commentOnlyBtn.title = 'Comment scan not available on Facebook Marketplace';
       } else {
         banner.className = "page-status page-status--neutral";
         banner.innerHTML = `<i class="fas fa-search"></i><span>${platform.label} detected — open a product page to scan</span>`;
@@ -422,18 +460,21 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
 
   // Bot / Fake Review Analysis — only shown when reviews were actually analyzed
   let botAnalysisHTML = '';
-  // Backend /analyze/deep returns `comments` with `comments_analyzed`.
-  // Older code paths used `comment_analysis` with `reviews_analyzed`. Support both.
-  const ca = scanResult?.comment_analysis
-    ?? (scanResult?.comments ? {
-          reviews_analyzed: scanResult.comments.comments_analyzed,
-          bot_likelihood_pct: scanResult.comments.bot_likelihood_pct,
-          fake_review_pct: scanResult.comments.fake_review_pct,
-        } : null);
-  if (ca?.reviews_analyzed > 0) {
+  // Use the whole comments/comment_analysis object so no field names are accidentally dropped.
+  const caRaw = scanResult?.comment_analysis ?? scanResult?.comments ?? null;
+  console.log('[SureShop] showRiskAssessment scanResult.comments:', JSON.stringify(caRaw));
+  const ca = caRaw ? {
+    // Try every field name variant the backend might use for the analyzed count
+    reviews_analyzed: caRaw.reviews_analyzed ?? caRaw.comments_analyzed ?? caRaw.total_comments ?? caRaw.analyzed_count ?? caRaw.num_analyzed ?? 0,
+    bot_likelihood_pct: caRaw.bot_likelihood_pct ?? caRaw.bot_score ?? 0,
+    fake_review_pct: caRaw.fake_review_pct ?? caRaw.fake_score ?? 0,
+    flags: caRaw.flags || [],
+  } : null;
+  // Show block when any comment analysis data exists (percentages present even if count is 0/unknown)
+  if (ca && (ca.reviews_analyzed > 0 || ca.bot_likelihood_pct > 0 || ca.fake_review_pct > 0)) {
     const botClass  = ca.bot_likelihood_pct  >= 50 ? 'analysis-high' : ca.bot_likelihood_pct  >= 25 ? 'analysis-medium' : 'analysis-low';
     const fakeClass = ca.fake_review_pct >= 50 ? 'analysis-high' : ca.fake_review_pct >= 25 ? 'analysis-medium' : 'analysis-low';
-    const commentFlags = scanResult?.comments?.flags || [];
+    const commentFlags = ca.flags;
     const commentFlagsHTML = commentFlags.length
       ? `<div class="bot-analysis-flags">${commentFlags.map(f =>
           `<div class="flag-item"><i class="fas fa-exclamation-triangle"></i>${String(f).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
@@ -498,7 +539,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       row('fa-star',             'Rating',        ratingDisplay,               isSh || isLa),
       row('fa-comments',         'Response Rate', productData.response_rate !== null && productData.response_rate !== undefined ? `${productData.response_rate}%` : null, isSh),
       row('fa-calendar-alt',     'Shop Age',      productData.shop_age,        isSh),
-      row('fa-medal',            'Seller Rating', productData.seller_rating !== null && productData.seller_rating !== undefined ? String(productData.seller_rating) : null, isLa),
+      row('fa-medal',            'Seller Rating', productData.seller_rating !== null && productData.seller_rating !== undefined ? String(productData.seller_rating) : null, isLa || isFb),
       row('fa-images',           'Images',        productData.image_count !== null && productData.image_count !== undefined ? String(productData.image_count) : null, true),
       // Facebook-specific
       row('fa-info-circle',      'Condition',     productData.condition,       isFb),
@@ -548,12 +589,13 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       <div id="cdata-body-panel" class="cdata-body cdata-body--hidden">${panelBodyHTML}</div>
     </div>`;
 
-  // Preserve live-reviews section across risk-card re-renders
+  // Preserve live-reviews section and panel-open state across risk-card re-renders
   const existingReviews = document.getElementById("sureshop-reviews-output");
+  const panelWasOpen = document.getElementById("cdata-body-panel")?.classList.contains("cdata-body--open");
   output.innerHTML = '';
-  output.style.padding = '10px 12px';
-  output.style.textAlign = 'center';
-  output.style.fontFamily = 'Poppins, sans-serif';
+  output.style.padding = '';
+  output.style.textAlign = '';
+  output.style.fontFamily = '';
   
   const container = document.createElement('div');
   container.innerHTML = `
@@ -711,6 +753,17 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     if (slot) slot.replaceWith(existingReviews);
     else output.appendChild(existingReviews);
   }
+
+  // Re-open the panel if it was open before the re-render
+  if (panelWasOpen) {
+    const panel = container.querySelector('#cdata-body-panel');
+    const toggle = container.querySelector('.cdata-toggle-input');
+    if (panel) {
+      panel.classList.remove("cdata-body--hidden");
+      panel.classList.add("cdata-body--open");
+    }
+    if (toggle) toggle.checked = true;
+  }
 }
 
 // Enhanced manual scan function - PRODUCTS ONLY
@@ -758,9 +811,9 @@ function performScan(isAutomatic = false, withReviews = false) {
       }
 
       // Determine which content script handles this platform
-      const contentScript = isShopee ? "content.js"
-                          : isLazada ? "content_lazada.js"
-                          : "content_facebook.js";
+      const contentScript = isShopee ? "src/content/content_shopee.js"
+                          : isLazada ? "src/content/content_lazada.js"
+                          : "src/content/content_facebook.js";
 
       // Helper: send EXTRACT_DATA message, injecting the content script first if needed
       async function sendExtractData() {
@@ -769,7 +822,7 @@ function performScan(isAutomatic = false, withReviews = false) {
             if (chrome.runtime.lastError) {
               // Content script not running — inject it then retry once
               chrome.scripting.executeScript(
-                { target: { tabId: currentTab.id }, files: ["config.js", contentScript] },
+                { target: { tabId: currentTab.id }, files: ["src/config.js", "src/shared/storage.js", contentScript] },
                 () => {
                   if (chrome.runtime.lastError) {
                     resolve(null);
@@ -915,32 +968,37 @@ function performScan(isAutomatic = false, withReviews = false) {
             // Normal scan: show result immediately
             showRiskAssessment(result.risk_score, result.risk_level, response.description || null, productData, result);
           } else {
+            lastShopeeReviews = [];
+            lastLazadaReviews = [];
             // Deep Scan: store initial result and only show it when collection stops
             lastDeepScanInitialResult = { risk_score: result.risk_score, risk_level: result.risk_level, description: response.description || null, productData, result };
 
             const isShopee = currentTab.url.includes("shopee.ph");
             const isLazada = currentTab.url.includes("lazada.com.ph");
-            const isFacebook = currentTab.url.includes("facebook.com") &&
-                               /\/marketplace\/item\/\d+/.test(currentTab.url);
 
             if (isShopee) {
               chrome.tabs.sendMessage(
                 currentTab.id,
                 { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
-                () => { setCommentsButtonState("scanning"); }
+                () => {
+                  setCommentsButtonState("scanning");
+                  output.innerHTML = `<div class="collecting-panel"><div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div><div class="collecting-label">Scanning Comments&hellip;</div><div class="collecting-count">0 reviews collected</div></div>`;
+                  output.style.padding = '10px 12px';
+                }
               );
             } else if (isLazada) {
               chrome.tabs.sendMessage(
                 currentTab.id,
                 { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
-                () => { setCommentsButtonState("scanning"); }
+                () => {
+                  setCommentsButtonState("scanning");
+                  output.innerHTML = `<div class="collecting-panel"><div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div><div class="collecting-label">Scanning Comments&hellip;</div><div class="collecting-count">0 reviews collected</div></div>`;
+                  output.style.padding = '10px 12px';
+                }
               );
-            } else if (isFacebook) {
-              chrome.tabs.sendMessage(
-                currentTab.id,
-                { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
-                () => { setCommentsButtonState("scanning"); }
-              );
+            } else {
+              // Platform doesn't support deep scan (e.g. Facebook) — show listing result directly
+              showRiskAssessment(result.risk_score, result.risk_level, response.description || null, productData, result);
             }
           }
         } else {
@@ -1023,9 +1081,82 @@ async function rescanWithReviews(productData, reviews, platformKey) {
     const riskLevel = result.combined_risk_level ?? result.risk_level;
     if (riskScore !== undefined && riskLevel !== undefined) {
       const cachedData = platformKey === 'lazada' ? lastLazadaProductData : lastFacebookProductData;
-      showRiskAssessment(riskScore, riskLevel, cachedData?.description || null, cachedData, result);
+      // Merge listing result (product_notice, confidence, flags) under the deep scan result
+      // so those fields are not lost when showRiskAssessment re-renders.
+      const mergedResult = { ...(lastDeepScanInitialResult?.result || {}), ...result };
+      showRiskAssessment(riskScore, riskLevel, cachedData?.description || null, cachedData, mergedResult);
     }
   } catch (_) {}
+}
+
+// -----------------------------------------------------------------------
+// Comment-only envelope synthesis — used when /analyze/deep wasn't called
+// (no listing payload was available, e.g. user clicked Scan Comments
+// without first running Normal Scan). The /analyze/comments endpoint returns
+// only the bot/fake-review signals; we synthesize a deep-shaped envelope so
+// the existing showRiskAssessment renderer can display the comment analysis
+// block. Score is derived from avg(bot, fake)*100 and banded client-side.
+// -----------------------------------------------------------------------
+function bandFromScore(score) {
+  if (score >= 76) return "High";
+  if (score >= 51) return "Medium";
+  if (score >= 26) return "Low";
+  return "Low"; // collapse "Very Low" → "Low" (no .risk-very CSS class)
+}
+
+/**
+ * Called when the content script's API call failed (message.result === null).
+ * The popup re-runs the analysis itself using the collected reviews.
+ * On success, re-renders the risk card with comment analysis included.
+ */
+async function analyzeCommentsFromPopup(reviews, productData, baseSr, platform) {
+  const { accessToken } = await chrome.storage.local.get('accessToken');
+  if (!accessToken) return;
+  const commentsPayload = {
+    platform,
+    comments: reviews.map(r => ({ text: r.text || r.comment || '', date: r.date || null, rating_stars: r.rating_stars ?? r.rating ?? null })),
+    page_number: 1, total_pages: 1
+  };
+  const useDeep = !!productData;
+  const url = useDeep ? `${SURESHOP_API_BASE}/analyze/deep` : `${SURESHOP_API_BASE}/analyze/comments`;
+  const body = useDeep ? { listing: productData, comments: commentsPayload } : commentsPayload;
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` }, body: JSON.stringify(body) });
+    if (!res.ok) return;
+    const result = await res.json();
+    const riskScore = result.combined_risk_score ?? result.risk_score ?? baseSr?.risk_score;
+    const riskLevel = result.combined_risk_level ?? result.risk_level ?? baseSr?.risk_level;
+    // Merge: keep listing-only fields (product_notice, confidence, risk_message, flags)
+    // from baseSr.result and overlay the deep-scan fields (comments, combined scores) on top.
+    const mergedResult = { ...(baseSr?.result || {}), ...result };
+    const sr = {
+      risk_score: riskScore, risk_level: riskLevel,
+      description: productData?.description || baseSr?.description || null,
+      productData: productData || baseSr?.productData,
+      result: mergedResult
+    };
+    showRiskAssessment(sr.risk_score, sr.risk_level, sr.description, sr.productData, sr.result);
+    // showRiskAssessment clears output — re-append collected reviews
+    appendReviewsToOutput(reviews, platform === 'lazada');
+  } catch (_) { /* silently fail */ }
+}
+
+function synthesizeCommentOnlyEnvelope(commentsResult) {
+  if (!commentsResult || typeof commentsResult !== 'object') return null;
+  const bot  = Number(commentsResult.bot_likelihood_pct)  || 0;
+  const fake = Number(commentsResult.fake_review_pct)     || 0;
+  const score = Math.max(0, Math.min(100, Math.round((bot + fake) / 2)));
+  const level = bandFromScore(score);
+  return {
+    risk_score: score,
+    risk_level: level,
+    result: {
+      comments: commentsResult,
+      flags: commentsResult.flags || [],
+      // Keep listing-derived fields absent so the UI does not claim a listing
+      // confidence value that wasn't computed.
+    },
+  };
 }
 
 // -----------------------------------------------------------------------
@@ -1042,70 +1173,136 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "SHOPEE_SCAN_UPDATED") {
-    dbg("[Popup] Progressive update (collecting):", message.risk_score, message.risk_level);
-    // Results are shown only when collection stops — don't update the card mid-scan.
+    if (Array.isArray(message.reviews)) lastShopeeReviews = message.reviews;
+    dbg("[Popup] Progressive update (collecting):", message.risk_score, message.risk_level, (message.reviews || []).length);
+    const _spCount = (message.reviews || []).length;
+    // Update the active button with a live count so the side panel shows progress
+    if (progressiveState === "scanning") {
+      commentsBtn.innerHTML = `<i class="fas fa-stop"></i> Stop Collecting (${_spCount})`;
+    }
+    if (commentOnlyState === "scanning") {
+      commentOnlyBtn.innerHTML = `<i class="fas fa-stop"></i> Stop Collecting (${_spCount})`;
+    }
+    // Always show a collecting-progress card so the count is visible in the side panel
+    const _scoreHtml = message.risk_score != null && message.risk_level
+      ? `<div class="collecting-score-row"><span class="collecting-score-badge collecting-score-${message.risk_level.toLowerCase()}">${message.risk_level} Risk &middot; ${message.risk_score}/100</span></div>`
+      : '';
+    const _existing = output.querySelector('.collecting-panel');
+    if (_existing) {
+      _existing.querySelector('.collecting-count').textContent = `${_spCount} review${_spCount !== 1 ? 's' : ''} collected`;
+      if (message.risk_score != null && message.risk_level) {
+        let _sr = _existing.querySelector('.collecting-score-row');
+        if (_sr) _sr.outerHTML = _scoreHtml; else _existing.insertAdjacentHTML('beforeend', _scoreHtml);
+      }
+    } else if (progressiveState === 'scanning' || commentOnlyState === 'scanning') {
+      // Only restore collecting panel if still scanning — guards against a late-arriving
+      // SHOPEE_SCAN_UPDATED (from an un-awaited fetch) overwriting the result card.
+      output.innerHTML = `<div class="collecting-panel"><div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div><div class="collecting-label">Scanning Comments&hellip;</div><div class="collecting-count">${_spCount} review${_spCount !== 1 ? 's' : ''} collected</div>${_scoreHtml}</div>`;
+      output.style.padding = '10px 12px';
+    }
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_STOPPED") {
     setActiveCollectionState("stopped");
-    const sr = message.risk_score !== undefined && message.risk_level
+    let sr = message.risk_score !== undefined && message.risk_score !== null && message.risk_level
       ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastShopeeProductData?.description || null, productData: lastShopeeProductData, result: message.result || null }
       : lastDeepScanInitialResult;
-    if (sr) showRiskAssessment(sr.risk_score, sr.risk_level, sr.description, sr.productData, sr.result);
-    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
-      appendReviewsToOutput(message.reviews, false);
+    // Comment-only fallback: render bot analysis even with no product score.
+    if (!sr && message.result?.comments) {
+      const env = synthesizeCommentOnlyEnvelope(message.result.comments);
+      if (env) sr = { ...env, description: lastShopeeProductData?.description || null, productData: lastShopeeProductData };
     }
+    // Always prefer the deep scan result for comment analysis display.
+    // lastDeepScanInitialResult.result is from /analyze/listing (no comment data);
+    // message.result is from /analyze/deep (has comments block) — always use it when available.
+    if (sr && message.result) sr = { ...sr, result: message.result };
+    if (sr) showRiskAssessment(sr.risk_score, sr.risk_level, sr.description, sr.productData, sr.result);
+    const shopeeReviews = Array.isArray(message.reviews) && message.reviews.length > 0
+      ? message.reviews
+      : (Array.isArray(lastShopeeReviews) ? lastShopeeReviews : []);
+    lastShopeeReviews = shopeeReviews;
+    appendReviewsToOutput(shopeeReviews, false);
+    // Content script's API call failed — popup fetches comment analysis itself.
+    if (!message.result && shopeeReviews.length > 0) analyzeCommentsFromPopup(shopeeReviews, lastShopeeProductData, sr, 'shopee');
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_RESTARTED") {
     setActiveCollectionState("scanning");
+    // Clear previous results so the side panel starts fresh
+    lastShopeeReviews = [];
+    output.innerHTML = `<div class="collecting-panel"><div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div><div class="collecting-label">Scanning Comments&hellip;</div><div class="collecting-count">0 reviews collected</div></div>`;
+    output.style.padding = '10px 12px';
   }
 
-  // Direct reviews from content script — results are shown only when
-  // collection stops, so we silently ignore mid-scan DIRECT messages.
-  // (The full deep result is forwarded via LAZADA_PROGRESSIVE_STOPPED.)
+  // Direct reviews from Lazada content script — collecting in progress.
+  // Only update the count in the collecting panel; never render a result card mid-scan.
   if (message.type === "LAZADA_REVIEWS_DIRECT") {
-    dbg("[Popup] Lazada DIRECT reviews received (collecting, suppressed):", (message.reviews || []).length);
+    if (Array.isArray(message.reviews)) lastLazadaReviews = message.reviews;
+    dbg("[Popup] Lazada DIRECT reviews received (collecting, count only):", (message.reviews || []).length);
     return;
   }
 
-  if (message.type === "FACEBOOK_REVIEWS_DIRECT") {
-    appendReviewsToOutput(message.reviews || [], false);
-    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
-      rescanWithReviews(lastFacebookProductData, message.reviews, 'facebook');
-    }
+  // Surface API errors raised by content scripts (e.g. expired token, 5xx).
+  if (message.type === "SCAN_API_ERROR") {
+    const status = message.status ? ` (HTTP ${message.status})` : "";
+    const scope = message.scope === "comments" ? "comment analysis" : "risk analysis";
+    showToast(`Couldn't update ${scope}${status}. Please try again.`, "error", 5000);
     return;
-  }
-
-  if (message.type === "FACEBOOK_PROGRESSIVE_STOPPED") {
-    setActiveCollectionState("stopped");
-    const fr = message.risk_score !== undefined && message.risk_score !== null && message.risk_level
-      ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastFacebookProductData?.description || null, productData: lastFacebookProductData, result: message.result || null }
-      : lastDeepScanInitialResult;
-    if (fr) showRiskAssessment(fr.risk_score, fr.risk_level, fr.description, fr.productData, fr.result);
-    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
-      appendReviewsToOutput(message.reviews, false);
-    }
   }
 
   if (message.type === "LAZADA_SCAN_UPDATED") {
-    dbg("[Popup] Lazada progressive update (collecting):", message.risk_score, message.risk_level);
-    // Results are shown only when collection stops — don't update the card mid-scan.
+    if (Array.isArray(message.reviews)) lastLazadaReviews = message.reviews;
+    dbg("[Popup] Lazada progressive update (collecting):", message.risk_score, message.risk_level, (message.reviews || []).length);
+    const _lzCount = (message.reviews || []).length;
+    if (progressiveState === "scanning") {
+      commentsBtn.innerHTML = `<i class="fas fa-stop"></i> Stop Collecting (${_lzCount})`;
+    }
+    if (commentOnlyState === "scanning") {
+      commentOnlyBtn.innerHTML = `<i class="fas fa-stop"></i> Stop Collecting (${_lzCount})`;
+    }
+    const _scoreHtml = message.risk_score != null && message.risk_level
+      ? `<div class="collecting-score-row"><span class="collecting-score-badge collecting-score-${message.risk_level.toLowerCase()}">${message.risk_level} Risk &middot; ${message.risk_score}/100</span></div>`
+      : '';
+    const _lzExisting = output.querySelector('.collecting-panel');
+    if (_lzExisting) {
+      _lzExisting.querySelector('.collecting-count').textContent = `${_lzCount} review${_lzCount !== 1 ? 's' : ''} collected`;
+      if (message.risk_score != null && message.risk_level) {
+        let _sr = _lzExisting.querySelector('.collecting-score-row');  
+        if (_sr) _sr.outerHTML = _scoreHtml; else _lzExisting.insertAdjacentHTML('beforeend', _scoreHtml);
+      }
+    } else if (progressiveState === 'scanning' || commentOnlyState === 'scanning') {
+      // Only restore collecting panel if still scanning — guards against a late-arriving
+      // LAZADA_SCAN_UPDATED (from an un-awaited fetch) overwriting the result card.
+      output.innerHTML = `<div class="collecting-panel"><div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div><div class="collecting-label">Scanning Comments&hellip;</div><div class="collecting-count">${_lzCount} review${_lzCount !== 1 ? 's' : ''} collected</div>${_scoreHtml}</div>`;
+      output.style.padding = '10px 12px';
+    }
   }
 
   if (message.type === "LAZADA_PROGRESSIVE_STOPPED") {
     setActiveCollectionState("stopped");
-    const lr = message.risk_score !== undefined && message.risk_level
+    let lr = message.risk_score !== undefined && message.risk_score !== null && message.risk_level
       ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastLazadaProductData?.description || null, productData: lastLazadaProductData, result: message.result || null }
       : lastDeepScanInitialResult;
-    if (lr) showRiskAssessment(lr.risk_score, lr.risk_level, lr.description, lr.productData, lr.result);
-    if (Array.isArray(message.reviews) && message.reviews.length > 0) {
-      appendReviewsToOutput(message.reviews, true);
+    if (!lr && message.result?.comments) {
+      const env = synthesizeCommentOnlyEnvelope(message.result.comments);
+      if (env) lr = { ...env, description: lastLazadaProductData?.description || null, productData: lastLazadaProductData };
     }
+    if (lr && message.result) lr = { ...lr, result: message.result };
+    if (lr) showRiskAssessment(lr.risk_score, lr.risk_level, lr.description, lr.productData, lr.result);
+    const lazadaReviews = Array.isArray(message.reviews) && message.reviews.length > 0
+      ? message.reviews
+      : (Array.isArray(lastLazadaReviews) ? lastLazadaReviews : []);
+    lastLazadaReviews = lazadaReviews;
+    appendReviewsToOutput(lazadaReviews, true);
+    if (!message.result && lazadaReviews.length > 0) analyzeCommentsFromPopup(lazadaReviews, lastLazadaProductData, lr, 'lazada');
   }
 
   if (message.type === "LAZADA_PROGRESSIVE_RESTARTED") {
     setActiveCollectionState("scanning");
+    // Clear previous results so the side panel starts fresh
+    lastLazadaReviews = [];
+    output.innerHTML = `<div class="collecting-panel"><div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div><div class="collecting-label">Scanning Comments&hellip;</div><div class="collecting-count">0 reviews collected</div></div>`;
+    output.style.padding = '10px 12px';
   }
 });
 
@@ -1121,30 +1318,23 @@ function performCommentOnlyScan() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (!tabs[0]) return;
     const url = tabs[0].url;
-    const isShopee   = url.includes("shopee.ph");
-    const isLazada   = url.includes("lazada.com.ph");
-    const isFacebook = url.includes("facebook.com") && /\/marketplace\/item\/\d+/.test(url);
+    const isShopee = url.includes("shopee.ph");
+    const isLazada = url.includes("lazada.com.ph");
 
-    if (!isShopee && !isLazada && !isFacebook) {
-      showToast("Open a Shopee, Lazada, or FB Marketplace product page to scan comments.", "warning", 4500);
+    if (!isShopee && !isLazada) {
+      showToast("Open a Shopee or Lazada product page to scan comments.", "warning", 4500);
       return;
     }
 
-    const contentScript = isShopee ? "content.js"
-                        : isLazada ? "content_lazada.js"
-                        : "content_facebook.js";
-
-    // Use cached product data if available so the risk score also updates;
-    // passing null is fine — collection still works, API re-scan is simply skipped.
-    const scanData = isShopee   ? lastShopeeProductData
-                   : isLazada   ? lastLazadaProductData
-                   : isFacebook ? lastFacebookProductData
-                   : null;
+    const contentScript = isShopee ? "src/content/content_shopee.js" : "src/content/content_lazada.js";
+    const scanData = isShopee ? lastShopeeProductData : lastLazadaProductData;
 
     commentOnlyBtn.innerHTML = '<i class="fas fa-sync spinning"></i> Starting...';
     commentOnlyBtn.disabled = true;
 
     function doStart() {
+      lastShopeeReviews = [];
+      lastLazadaReviews = [];
       chrome.tabs.sendMessage(
         tabs[0].id,
         { type: "START_PROGRESSIVE_COLLECTION", scanData },
@@ -1155,13 +1345,8 @@ function performCommentOnlyScan() {
             return;
           }
           setCommentOnlyButtonState("scanning");
-          setTimeout(() => {
-            chrome.tabs.sendMessage(
-              tabs[0].id,
-              { type: "GET_PROGRESSIVE_REVIEWS" },
-              (r) => appendReviewsToOutput(r?.reviews || [], isLazada)
-            );
-          }, isLazada ? 600 : 400);
+          output.innerHTML = `<div class="collecting-panel"><div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div><div class="collecting-label">Scanning Comments&hellip;</div><div class="collecting-count">0 reviews collected</div></div>`;
+          output.style.padding = '10px 12px';
         }
       );
     }
@@ -1170,7 +1355,7 @@ function performCommentOnlyScan() {
     chrome.tabs.sendMessage(tabs[0].id, { type: "PING" }, () => {
       if (chrome.runtime.lastError) {
         chrome.scripting.executeScript(
-          { target: { tabId: tabs[0].id }, files: [contentScript] },
+          { target: { tabId: tabs[0].id }, files: ["src/config.js", "src/shared/storage.js", contentScript] },
           () => {
             if (chrome.runtime.lastError) {
               showToast("Unable to access this page. Please refresh and try again.", "error");
@@ -1197,10 +1382,19 @@ commentOnlyBtn.addEventListener("click", () => {
   if (commentOnlyState === "stopped") {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
-        const restartType = tabs[0].url.includes("lazada.com.ph")
+        const currentUrl = tabs[0].url;
+        const cachedUrl = lastShopeeProductData?.url || lastLazadaProductData?.url || lastFacebookProductData?.url || "";
+        if (cachedUrl && currentUrl !== cachedUrl) {
+          // User navigated to a different product — clear stale cache and start fresh
+          lastShopeeProductData = null;
+          lastLazadaProductData = null;
+          lastFacebookProductData = null;
+          setCommentOnlyButtonState("idle");
+          performCommentOnlyScan();
+          return;
+        }
+        const restartType = currentUrl.includes("lazada.com.ph")
           ? "LAZADA_RESTART_COLLECTION"
-          : tabs[0].url.includes("facebook.com")
-          ? "FACEBOOK_RESTART_COLLECTION"
           : "SHOPEE_RESTART_COLLECTION";
         chrome.tabs.sendMessage(tabs[0].id, { type: restartType });
       }
@@ -1221,12 +1415,14 @@ function setCommentsButtonState(state) {
     commentsBtn.style.color = '#fff';
     commentsBtn.style.borderColor = '#e74c3c';
     commentsBtn.disabled = false;
+    startCollectingPoll();
   } else if (state === "stopped") {
     commentsBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Collection';
     commentsBtn.style.background = '#1b9c85';
     commentsBtn.style.color = '#fff';
     commentsBtn.style.borderColor = '#1b9c85';
     commentsBtn.disabled = false;
+    stopCollectingPoll();
   } else {
     commentsBtn.innerHTML = '<i class="fas fa-layer-group"></i> Deep Scan';
     commentsBtn.style.background = '';
@@ -1234,6 +1430,7 @@ function setCommentsButtonState(state) {
     commentsBtn.style.borderColor = '';
     commentsBtn.disabled = false;
     progressiveState = "idle";
+    stopCollectingPoll();
   }
 }
 
@@ -1245,12 +1442,14 @@ function setCommentOnlyButtonState(state) {
     commentOnlyBtn.style.color = '#fff';
     commentOnlyBtn.style.borderColor = '#e74c3c';
     commentOnlyBtn.disabled = false;
+    startCollectingPoll();
   } else if (state === "stopped") {
     commentOnlyBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Collection';
     commentOnlyBtn.style.background = '#1b9c85';
     commentOnlyBtn.style.color = '#fff';
     commentOnlyBtn.style.borderColor = '#1b9c85';
     commentOnlyBtn.disabled = false;
+    stopCollectingPoll();
   } else {
     commentOnlyBtn.innerHTML = '<i class="fas fa-comments"></i> Scan Comments';
     commentOnlyBtn.style.background = '';
@@ -1258,6 +1457,7 @@ function setCommentOnlyButtonState(state) {
     commentOnlyBtn.style.borderColor = '';
     commentOnlyBtn.disabled = false;
     commentOnlyState = "idle";
+    stopCollectingPoll();
   }
 }
 
@@ -1276,10 +1476,19 @@ commentsBtn.addEventListener("click", () => {
     // User restarts collection with the same product data
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
-        const restartType = tabs[0].url.includes("lazada.com.ph")
+        const currentUrl = tabs[0].url;
+        const cachedUrl = lastShopeeProductData?.url || lastLazadaProductData?.url || lastFacebookProductData?.url || "";
+        if (cachedUrl && currentUrl !== cachedUrl) {
+          // User navigated to a different product — clear stale cache and start fresh
+          lastShopeeProductData = null;
+          lastLazadaProductData = null;
+          lastFacebookProductData = null;
+          setCommentsButtonState("idle");
+          performScan(false, true);
+          return;
+        }
+        const restartType = currentUrl.includes("lazada.com.ph")
           ? "LAZADA_RESTART_COLLECTION"
-          : tabs[0].url.includes("facebook.com")
-          ? "FACEBOOK_RESTART_COLLECTION"
           : "SHOPEE_RESTART_COLLECTION";
         chrome.tabs.sendMessage(tabs[0].id, { type: restartType });
       }
@@ -1377,20 +1586,22 @@ function appendReviewsToOutput(reviews, isLazada = false) {
       <div class="reviews-list">${cards}</div>`;
   }
 
-  // Try to place reviews inside the panel's comments slot first
+  // Replace the placeholder slot inside the "View Collected Data" panel
+  // while preserving the user's current panel toggle state.
+  const existing = document.getElementById("sureshop-reviews-output");
+  if (existing) {
+    existing.replaceWith(divider);
+    return;
+  }
+
   const slot = document.getElementById("cdata-comments-slot");
   if (slot) {
     slot.replaceWith(divider);
     return;
   }
 
-  // Fallback: replace existing or append to output
-  const existing = document.getElementById("sureshop-reviews-output");
-  if (existing) {
-    existing.replaceWith(divider);
-  } else {
-    output.appendChild(divider);
-  }
+  // No slot or existing block yet — append directly to output as fallback
+  output.appendChild(divider);
 }
 
 function resetCommentsButton() {

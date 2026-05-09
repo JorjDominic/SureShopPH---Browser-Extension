@@ -1,101 +1,86 @@
 {
   "manifest_version": 3,
+  "default_locale": "en",
   "name": "SureShopPH - Online Shopping Risk Detection",
-  "description": "Helps protect Filipino online shoppers from scams. Scans Shopee, Lazada, and Facebook Marketplace product listings for risk factors when you click Scan. Also checks URLs of other sites you visit for known phishing and fraud indicators. Data is analyzed by the SureShop service. A privacy policy is available at the SureShop website.",
-  "version": "0.2",
+  "description": "Helps protect Filipino online shoppers from scams. Scans Shopee, Lazada, and Facebook Marketplace product listings for risk factors when you click Scan. Data is analyzed by the SureShop service. A privacy policy is available at the SureShop website.",
+  "version": "0.3",
   "permissions": [
     "tabs",
     "activeTab",
     "scripting",
     "storage",
-    "webNavigation",
-    "sidePanel"
+    "sidePanel",
+    "contextMenus"
   ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Open SureShop side panel"
+    },
+    "scan-page": {
+      "suggested_key": { "default": "Alt+Shift+X" },
+      "description": "Trigger SureShop scan on the current page"
+    }
+  },
   "side_panel": {
-    "default_path": "popup.html"
+    "default_path": "src/popup/popup.html"
   },
   "host_permissions": [
     "https://*.shopee.ph/*",
     "https://*.lazada.com.ph/*",
     "https://*.facebook.com/marketplace/*",
-    "https://*.tiktok.com/*",
-    "https://*.zalora.com.ph/*",
-    "https://*.carousell.ph/*",
-    "https://*.shein.com/*",
-    "https://*.temu.com/*",
-    "https://*.amazon.com/*",
-    "https://*.ebay.ph/*",
-    "https://*.aliexpress.com/*",
-    "https://*.beautymnl.com/*",
-    "https://*.kimstore.com/*",
-    "https://*.galleon.ph/*",
     "http://localhost/*"
   ],
   "icons": {
-    "16": "icon16.png",
-    "32": "icon32.png",
-    "48": "icon48.png",
-    "128": "icon128.png"
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
   "content_scripts": [
     {
       "matches": ["https://*.shopee.ph/*"],
-      "js": ["config.js", "content.js"],
+      "js": ["src/config.js", "src/shared/storage.js", "src/content/content_shopee.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://*.lazada.com.ph/*"],
-      "js": ["config.js", "content_lazada.js"],
+      "js": ["src/config.js", "src/shared/storage.js", "src/content/content_lazada.js"],
       "run_at": "document_idle",
       "all_frames": true
     },
     {
       "matches": ["https://*.facebook.com/marketplace/*"],
-      "js": ["config.js", "content_facebook.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "https://*.tiktok.com/*",
-        "https://*.zalora.com.ph/*",
-        "https://*.carousell.ph/*",
-        "https://*.shein.com/*",
-        "https://*.temu.com/*",
-        "https://*.amazon.com/*",
-        "https://*.ebay.ph/*",
-        "https://*.aliexpress.com/*",
-        "https://*.beautymnl.com/*",
-        "https://*.kimstore.com/*",
-        "https://*.galleon.ph/*"
-      ],
-      "js": ["config.js", "universal_content.js"],
+      "js": ["src/config.js", "src/shared/storage.js", "src/content/content_facebook.js"],
       "run_at": "document_idle"
     }
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "src/background.js"
   },
   "action": {
     "default_title": "SureShop - Scan for scams",
     "default_icon": {
-      "16": "icon16.png",
-      "32": "icon32.png",
-      "48": "icon48.png",
-      "128": "icon128.png"
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
     }
   },
   "web_accessible_resources": [{
     "resources": [
-      "fonts/fa/fa-solid-combined.css",
-      "fonts/fa/webfonts/fa-solid-900.woff2",
-      "fonts/fa/webfonts/fa-solid-900.ttf",
-      "fonts/poppins/poppins.css",
-      "fonts/poppins/poppins-300.woff2",
-      "fonts/poppins/poppins-400.woff2",
-      "fonts/poppins/poppins-500.woff2",
-      "fonts/poppins/poppins-600.woff2",
-      "fonts/poppins/poppins-700.woff2",
-      "fonts/poppins/poppins-800.woff2"
+      "assets/fonts/fa/fa-solid-combined.css",
+      "assets/fonts/fa/webfonts/fa-solid-900.woff2",
+      "assets/fonts/fa/webfonts/fa-solid-900.ttf",
+      "assets/fonts/poppins/poppins.css",
+      "assets/fonts/poppins/poppins-300.woff2",
+      "assets/fonts/poppins/poppins-400.woff2",
+      "assets/fonts/poppins/poppins-500.woff2",
+      "assets/fonts/poppins/poppins-600.woff2",
+      "assets/fonts/poppins/poppins-700.woff2",
+      "assets/fonts/poppins/poppins-800.woff2",
+      "src/onboarding/onboarding.html",
+      "src/shared/storage.js"
     ],
     "matches": ["<all_urls>"]
   }]

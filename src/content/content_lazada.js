@@ -239,7 +239,7 @@
       const faLink = document.createElement('link');
       faLink.id = 'sureshop-fa-css';
       faLink.rel = 'stylesheet';
-      faLink.href = chrome.runtime.getURL('fonts/fa/fa-solid-combined.css');
+      faLink.href = chrome.runtime.getURL('assets/fonts/fa/fa-solid-combined.css');
       document.head.appendChild(faLink);
     }
     document.head.appendChild(style);
@@ -251,9 +251,10 @@
     };
 
     setTimeout(() => {
-      if (document.getElementById("sureshopph-lazada-scan-card")) {
-        card.classList.add("dismissing");
-        setTimeout(() => card.remove(), 250);
+      const el = document.getElementById("sureshopph-lazada-scan-card");
+      if (el && !el._noAutoDismiss) {
+        el.classList.add("dismissing");
+        setTimeout(() => el.remove(), 250);
       }
     }, 7000);
   }
@@ -313,11 +314,15 @@
   }
 
   function extractSoldCount() {
-    const text = document.body.innerText;
+    // Use innerText where possible (preserves visible breaks). Fall back to a
+    // textContent crawl which catches text inside flex containers Lazada now
+    // uses (e.g. separate <span>34K+</span><span>Sold</span> nodes that
+    // innerText sometimes joins without whitespace).
+    const innerText = document.body.innerText || "";
+    const textContent = (document.body.textContent || "").replace(/\s+/g, " ");
 
-    // Helper: expand "1K", "1.2K+", "10M" abbreviations to a plain number string
     const expandAbbrev = raw => {
-      const m = raw.replace(/,/g, "").match(/^([\d.]+)([KkMm]?)\+?$/);
+      const m = raw.replace(/[,\s]/g, "").match(/^([\d.]+)([KkMm]?)\+?$/);
       if (!m) return raw;
       const n = parseFloat(m[1]);
       if (m[2].toUpperCase() === "K") return String(Math.round(n * 1000));
@@ -325,15 +330,34 @@
       return String(Math.round(n));
     };
 
-    // Matches "34K+ Sold", "1.2K Sold", "1,234 Sold", "34K+ sold"
-    const match = text.match(/([\d.,]+[KkMm]?\+?)\s+Sold/i);
-    if (match) return { value: expandAbbrev(match[1]), confidence: "high" };
+    // Try a series of patterns on both innerText and textContent.
+    // Order matters — most specific first.
+    const patterns = [
+      // "34K+ Sold", "1.2K Sold", "1,234 Sold", "34K+ items sold", "34 item sold"
+      /([\d.,]+\s*[KkMm]?\+?)\s+(?:items?\s+)?sold\b/i,
+      // "Sold: 1,234", "Sold 1.2K"
+      /\bsold[:\s]+([\d.,]+\s*[KkMm]?\+?)/i,
+      // "Quantity Sold 1,234"
+      /quantity\s+sold[:\s]+([\d.,]+\s*[KkMm]?\+?)/i
+    ];
 
-    // Also try: "X sold in last 30 days" style
-    const altMatch = text.match(/([\d.,]+[KkMm]?\+?)\s+(?:items?\s+)?sold/i);
-    return altMatch
-      ? { value: expandAbbrev(altMatch[1]), confidence: "medium" }
-      : { value: null, confidence: "low" };
+    for (const src of [innerText, textContent]) {
+      for (const re of patterns) {
+        const m = src.match(re);
+        if (m) {
+          const value = expandAbbrev(m[1].trim());
+          if (value && value !== "0") return { value, confidence: "high" };
+          if (value === "0") return { value: "0", confidence: "high" };
+        }
+      }
+    }
+
+    // Explicit "0 Sold"
+    if (/\b0\s+sold\b/i.test(innerText) || /\b0\s+sold\b/i.test(textContent)) {
+      return { value: "0", confidence: "high" };
+    }
+
+    return { value: null, confidence: "low" };
   }
 
   function extractRatings() {
@@ -851,16 +875,61 @@
       /^Seller['']?s?\s*(Response|Reply)/i.test(l) ||
       /^Response\s+from\s+(the\s+)?seller/i.test(l) ||
       /^(Store|Shop)\s+(Response|Reply)/i.test(l) ||
+      /^(Reply|Response)\s+from\s+(store|shop|seller)/i.test(l) ||
       /^Tugon\s+(ng\s+)?(Nagbebenta|Seller|Tindahan)/i.test(l) ||  // Tagalog
-      /^Sagot\s+(ng\s+)?(Nagbebenta|Seller)/i.test(l);             // Tagalog alt
+      /^Sagot\s+(ng\s+)?(Nagbebenta|Seller)/i.test(l) ||           // Tagalog alt
+      /^Reply\s*:/i.test(l);
 
-    // Matches the BODY of a seller response (greeting patterns sellers use)
+    // Matches the BODY of a seller response (greeting / sign-off patterns sellers use).
+    // Filipino sellers often use a mix of English and Tagalog politeness markers.
     const isSellerResponseGreeting = l =>
-      /^Dear\s+(customer|buyer|valued|po\b)/i.test(l) ||
-      /^(Hi|Hello|Kamusta|Mabuhay)[,!]?\s*(po\b|customer|buyer|valued)/i.test(l) ||
-      /^(Salamat|Nagpapasalamat|Nais\s+naming|Ikinalulugod)/i.test(l) ||
-      /^(Thank\s+you|Thanks)\s+for\s+(your|the)\s+(review|feedback|purchase|order)/i.test(l) ||
-      /^We\s+(are\s+)?(happy|glad|thrilled|sorry|apologize)\s+to\s+hear/i.test(l);
+      /^Dear\s+(customer|buyer|valued|po\b|sir|ma['']?am|madam)/i.test(l) ||
+      /^(Hi|Hello|Hey|Kamusta|Kumusta|Mabuhay|Greetings)[,!.\s]/i.test(l) ||
+      /^(Hi|Hello)\s+po\b/i.test(l) ||
+      /^(Salamat|Nagpapasalamat|Maraming\s+salamat|Nais\s+naming|Ikinalulugod|Ikinagagalak)/i.test(l) ||
+      /^(Thank\s+you|Thanks|Thank\s+you\s+so\s+much)\s+(po\s+)?(for|sa|in)\b/i.test(l) ||
+      /^We\s+(are\s+|truly\s+|deeply\s+)?(happy|glad|thrilled|sorry|apologize|appreciate|regret)/i.test(l) ||
+      /^We\s+(would|will|are\s+going)\s+(like|love|to)\b/i.test(l) ||
+      /^(Our\s+(team|store|shop)|This\s+is\s+(from\s+)?(our|the)\s+(team|store|shop))/i.test(l) ||
+      /^(Sorry|Apologies|Apology|Pasensya|Paumanhin)\s+(po\b|for|na|sa)/i.test(l) ||
+      /^Please\s+(accept|allow|kindly|note|contact|reach|visit)/i.test(l) ||
+      /^(Best|Kind|Warm)\s+regards/i.test(l) ||
+      /\bcustomer\s+service\s+(team|department)\b/i.test(l) ||
+      /^(For\s+(further|any)\s+(concerns|inquiries|questions)|Should\s+you\s+(have|need))/i.test(l);
+
+    // Detects sign-offs that strongly indicate a seller reply paragraph
+    const isSellerSignoff = l =>
+      /\bregards\s*,?\s*$/i.test(l) ||
+      /\bcustomer\s+service\b/i.test(l) ||
+      /\b(your\s+)?(store|shop)\s+team\b/i.test(l) ||
+      /\bmaraming\s+salamat\s+po\b/i.test(l);
+
+    // Catches seller-reply phrases that appear ANYWHERE inside a leaf
+    // (not just at the start). Customer reviews almost never use these
+    // phrases. This is the last line of defense for replies that have no
+    // explicit heading and don't start with a greeting.
+    const containsSellerLanguage = l => {
+      const s = l.toLowerCase();
+      return (
+        /\bdear\s+(customer|buyer|valued|sir|ma'?am|madam|po\b)/i.test(l) ||
+        /\bthank\s+you\s+(so\s+much\s+)?(for|po)\s+(your|sa|the)\b/i.test(l) ||
+        /\bwe\s+(are|will|would|truly|deeply|highly|sincerely)\s+(sorry|apologize|appreciate|regret|happy|glad|hope|like|love|do|value)/i.test(l) ||
+        /\bwe\s+(apologize|appreciate|value|regret)\b/i.test(l) ||
+        /\b(our|the)\s+(store|shop|team|company)\s+(team|will|would|appreciate|values|apologizes)/i.test(l) ||
+        /\bplease\s+(accept|allow|kindly|note|contact|reach\s+out|visit|do\s+not\s+hesitate|let\s+us\s+know)/i.test(l) ||
+        /\bdo\s+not\s+hesitate\s+to\s+(contact|reach)/i.test(l) ||
+        /\bcustomer\s+service\s+(team|department|representative)/i.test(l) ||
+        /\bbest\s+regards\b/i.test(l) ||
+        /\b(kind|warm)\s+regards\b/i.test(l) ||
+        /\b(your|our)\s+feedback\s+is\s+(valuable|important|highly\s+appreciated)/i.test(l) ||
+        /\bvalued\s+customer\b/i.test(l) ||
+        /\bsincerely\s+yours?\b/i.test(l) ||
+        /\bwe\s+would\s+like\s+to\s+(thank|apologize|inform|hear)/i.test(l) ||
+        /\b(salamat|maraming\s+salamat|paumanhin|pasensya)\s+po\b/i.test(l) ||
+        /\bnais\s+po\s+naming\b/i.test(l) ||
+        /\bika(y|w)\s+ay\s+aming/i.test(l)
+      );
+    };
 
     const isMetaLine = l => isDateLine(l) || isSkipLine(l);
 
@@ -1025,14 +1094,30 @@
       const longestLeaf = leaves
         .filter(l => !isMetaLine(l) && l.length > 5)
         .sort((a, b) => b.length - a.length)[0] || "";
-      if (!sellerHeadingNode && isSellerResponseGreeting(longestLeaf)) continue;
+      if (!sellerHeadingNode && (isSellerResponseGreeting(longestLeaf) || containsSellerLanguage(longestLeaf))) continue;
 
       // Also skip items where any leaf is the seller response greeting
       // (covers cases where heading IS present but misidentified)
-      if (leaves.some(l => isSellerResponseGreeting(l))) {
+      if (leaves.some(l => isSellerResponseGreeting(l) || containsSellerLanguage(l))) {
         // Re-check: only skip if a greeting is outside the username position
-        const greetingLeaf = leaves.find(l => isSellerResponseGreeting(l));
-        if (greetingLeaf && greetingLeaf !== username) continue;
+        const greetingLeaf = leaves.find(l => isSellerResponseGreeting(l) || containsSellerLanguage(l));
+        if (greetingLeaf && greetingLeaf !== username) {
+          // If there is ALSO a non-seller candidate that is clearly the customer
+          // review (different leaf, doesn't contain seller language), keep going
+          // and filter the seller leaf out below; otherwise skip the whole item.
+          const customerCandidate = leaves.find(l =>
+            l !== username &&
+            l !== greetingLeaf &&
+            !isMetaLine(l) &&
+            l.length > 10 &&
+            !isSellerResponseHeading(l) &&
+            !isSellerResponseGreeting(l) &&
+            !isSellerSignoff(l) &&
+            !containsSellerLanguage(l) &&
+            !isVariantLine(l)
+          );
+          if (!customerCandidate) continue;
+        }
       }
 
       // Variant: covers "Variation:", "Color family:", "Size:", etc.
@@ -1047,6 +1132,8 @@
           !sellerRespTexts.has(l) &&
           !isSellerResponseHeading(l) &&
           !isSellerResponseGreeting(l) &&
+          !isSellerSignoff(l) &&
+          !containsSellerLanguage(l) &&
           !isVariantLine(l)
         )
         .sort((a, b) => b.length - a.length)[0] || null;
@@ -1152,7 +1239,7 @@
         if (isDateLine(lines[j])) break;
         if (isInnerSectionEndLine(lines[j])) { i = lines.length; break; } // abort outer loop too
         // Detect seller response by heading OR by greeting content
-        if (isSellerResponseHeading(lines[j]) || isSellerResponseGreeting(lines[j])) {
+        if (isSellerResponseHeading(lines[j]) || isSellerResponseGreeting(lines[j]) || isSellerSignoff(lines[j]) || containsSellerLanguage(lines[j])) {
           inSellerResponse = true; continue;
         }
         if (inSellerResponse) continue;
@@ -1388,7 +1475,16 @@
 
   /** Ensure the scan card is visible, recreating it if dismissed */
   function ensureScanCard() {
-    if (!document.getElementById("sureshopph-lazada-scan-card")) showScanCard();
+    if (!document.getElementById("sureshopph-lazada-scan-card")) {
+      showScanCard();
+      // If progressive collection is currently active, immediately mark the
+      // freshly recreated card as "do not auto-dismiss" so the 7s timer that
+      // fires inside showScanCard() doesn't quietly remove it again.
+      if (progressiveActive) {
+        const el = document.getElementById("sureshopph-lazada-scan-card");
+        if (el) el._noAutoDismiss = true;
+      }
+    }
   }
 
   /** Notify the side panel that progressive collection stopped */
@@ -1412,140 +1508,109 @@
    * score/level may be null on the first call before any backend response.
    */
   function setCardScanningState(score, level, reviewCount) {
-    ensureScanCard();
+    // Review scanning feedback is shown in the side panel — dismiss the page card.
     const card = document.getElementById("sureshopph-lazada-scan-card");
-    if (!card) return;
-
-    // Cancel the auto-dismiss started by showScanCard
-    card._noAutoDismiss = true;
-
-    const colorMap = { Low: "#1b9c85", Medium: "#e67e22", High: "#e74c3c" };
-    const color = (score !== null && level) ? (colorMap[level] || "#677483") : "#1b9c85";
-    const scoreHtml = (score !== null && level)
-      ? `<div style="font-size:11px;color:${color};font-weight:600;">${level} Risk · ${score}/100</div>`
-      : "";
-
-    card.querySelector(".body").innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;">
-        <div style="font-size:10px;font-weight:700;color:#1b9c85;text-transform:uppercase;
-                    letter-spacing:.5px;background:rgba(27,156,133,.12);border:1px solid rgba(27,156,133,.25);
-                    border-radius:.4rem;padding:5px 10px;display:inline-flex;align-items:center;gap:5px;">
-          <i class="fas fa-circle-notch fa-spin"></i> Scanning Comments...
-        </div>
-        <div style="font-size:11px;color:#677483;">${reviewCount} review${reviewCount !== 1 ? "s" : ""} collected</div>
-        ${scoreHtml}
-        <button id="sureshop-stop-btn"
-          style="margin-top:4px;padding:6px 16px;border:none;border-radius:.5rem;
-                 background:#e74c3c;color:#fff;font-size:11px;font-weight:700;
-                 cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;">
-          <i class="fas fa-stop"></i> Stop
-        </button>
-      </div>`;
-
-    card.querySelector("#sureshop-stop-btn").onclick = () => {
-      stopProgressiveCollection(true);
-    };
+    if (card) {
+      card.classList.add("dismissing");
+      setTimeout(() => card.remove(), 250);
+    }
   }
 
   /**
    * Update the overlay to "stopped / final score" state.
    */
   function setCardStoppedState(score, level, reviewCount) {
-    ensureScanCard();
+    // Review scanning feedback is shown in the side panel — dismiss the page card.
     const card = document.getElementById("sureshopph-lazada-scan-card");
-    if (!card) return;
-
-    const colorMap = { Low: "#1b9c85", Medium: "#e67e22", High: "#e74c3c" };
-    const color = (level && colorMap[level]) || "#677483";
-    const scoreLabel = (score !== null && level)
-      ? `${level.toUpperCase()} RISK · ${score}/100`
-      : "Score pending";
-
-    card.querySelector(".body").innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;">
-        <div style="font-size:10px;font-weight:700;color:${color};text-transform:uppercase;
-                    letter-spacing:.5px;background:${color}1a;border:1px solid ${color}40;
-                    border-radius:.4rem;padding:5px 10px;display:inline-flex;align-items:center;gap:5px;">
-          <i class="fas fa-lock"></i> Final Score
-        </div>
-        <div style="font-size:13px;font-weight:700;color:${color};">${scoreLabel}</div>
-        <div style="font-size:11px;color:#677483;">Based on ${reviewCount} review${reviewCount !== 1 ? "s" : ""}</div>
-        <button id="sureshop-restart-btn"
-          style="margin-top:4px;padding:6px 16px;border:none;border-radius:.5rem;
-                 background:#1b9c85;color:#fff;font-size:11px;font-weight:700;
-                 cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-family:inherit;">
-          <i class="fas fa-redo"></i> Restart Scan
-        </button>
-      </div>`;
-
-    card.querySelector("#sureshop-restart-btn").onclick = () => {
-      if (progressiveScanData) {
-        startProgressiveCollection(progressiveScanData);
-        notifyPopupRestarted();
-      }
-    };
+    if (card) {
+      card.classList.add("dismissing");
+      setTimeout(() => card.remove(), 250);
+    }
   }
 
   /** Re-call backend with full accumulated review list and update UI */
   async function sendProgressiveUpdate() {
-    if (!progressiveScanData) return;
-
     const { accessToken } = await chrome.storage.local.get("accessToken");
     if (!accessToken) return;
 
     try {
-      const payload = {
-        listing: progressiveScanData,
-        comments: {
-          platform: progressiveScanData.platform || "lazada",
-          comments: (progressiveReviews || []).map(r => ({
-            text: r.text || r.comment || "",
-            date: r.date || null,
-            rating_stars: r.rating_stars ?? r.rating ?? null
-          })),
-          page_number: 1,
-          total_pages: 1
-        }
+      const commentsPayload = {
+        platform: (progressiveScanData && progressiveScanData.platform) || "lazada",
+        comments: (progressiveReviews || []).map(r => ({
+          text: r.text || r.comment || "",
+          date: r.date || null,
+          rating_stars: r.rating_stars ?? r.rating ?? null
+        })),
+        page_number: 1,
+        total_pages: 1
       };
-      const res = await fetch(`${SURESHOP_API_BASE}/analyze/deep`, {
+
+      // If a listing payload exists, run /analyze/deep for combined risk.
+      // Otherwise fall back to /analyze/comments so comment risk results
+      // still reach the popup in the comment-only flow.
+      const useDeep = !!progressiveScanData;
+      const url = useDeep ? `${SURESHOP_API_BASE}/analyze/deep` : `${SURESHOP_API_BASE}/analyze/comments`;
+      const body = useDeep
+        ? { listing: progressiveScanData, comments: commentsPayload }
+        : commentsPayload;
+
+      const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${accessToken}`
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(body)
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        chrome.runtime.sendMessage({
+          type: "SCAN_API_ERROR",
+          status: res.status,
+          scope: useDeep ? "deep" : "comments"
+        }).catch(() => {});
+        return;
+      }
 
       const result = await res.json();
-      const riskScore = result.combined_risk_score ?? result.risk_score;
-      const riskLevel = result.combined_risk_level ?? result.risk_level;
-      if (riskScore === undefined) return;
+
+      let riskScore, riskLevel, envelope;
+      if (useDeep) {
+        riskScore = result.combined_risk_score ?? result.risk_score;
+        riskLevel = result.combined_risk_level ?? result.risk_level;
+        envelope = result;
+      } else {
+        riskScore = null;
+        riskLevel = null;
+        envelope = { comments: result, flags: result.flags || [] };
+      }
 
       // Store latest score/level and update the on-page overlay
       lastProgressiveScore = riskScore;
       lastProgressiveLevel = riskLevel;
-      lastProgressiveResult = result;
+      lastProgressiveResult = envelope;
       setCardScanningState(riskScore, riskLevel, progressiveReviews.length);
 
-      // Persist for popup
-      await chrome.storage.local.set({
-        lastAutoScanResult: {
-          type: "product",
-          risk_score: riskScore,
-          risk_level: riskLevel,
-          description: progressiveScanData.description || null,
-          timestamp: Date.now(),
-          url: location.href
-        }
-      });
+      // Persist for popup (only when we have a real product score)
+      if (useDeep && riskScore !== undefined && riskScore !== null) {
+        await chrome.storage.local.set({
+          lastAutoScanResult: {
+            type: "product",
+            risk_score: riskScore,
+            risk_level: riskLevel,
+            description: progressiveScanData.description || null,
+            timestamp: Date.now(),
+            url: location.href
+          }
+        });
+      }
 
       // Notify popup if it is currently open
       chrome.runtime.sendMessage({
         type: "LAZADA_SCAN_UPDATED",
         risk_score: riskScore,
         risk_level: riskLevel,
-        reviews: progressiveReviews
+        reviews: progressiveReviews,
+        result: envelope
       }).catch(() => { /* popup may not be open */ });
 
     } catch (e) {
@@ -1962,10 +2027,8 @@
     }
 
     if (message.type === "LAZADA_RESTART_COLLECTION") {
-      if (progressiveScanData) {
-        startProgressiveCollection(progressiveScanData);
-        notifyPopupRestarted();
-      }
+      startProgressiveCollection(progressiveScanData);
+      notifyPopupRestarted();
       sendResponse({ ok: true });
       return true;
     }
