@@ -83,6 +83,15 @@ let progressiveState     = "idle"; // controls commentsBtn (Deep Scan)
 let commentOnlyState     = "idle"; // controls commentOnlyBtn (Scan Comments)
 let collectingPollInterval = null; // polls review count from content script while scanning
 
+// Guidance banner state
+let scanTooltipCount = 0;
+let scanStartTime = null;
+let midBannerVisible = false;
+let midBannerDismissedByUser = false;
+let dominantRatingWhenBannerShown = null;
+let midBannerReinforceTimer = null;
+let preScanGuidanceDismissed = false;
+
 function startCollectingPoll() {
   stopCollectingPoll();
   collectingPollInterval = setInterval(() => {
@@ -102,6 +111,7 @@ function startCollectingPoll() {
         if (commentOnlyState === "scanning") {
           commentOnlyBtn.innerHTML = `<i class="fas fa-stop"></i> Stop Collecting (${count})`;
         }
+        checkMidScanTriggers(r.reviews || []);
       });
     });
   }, 600);
@@ -132,6 +142,7 @@ async function checkAuthStatus() {
   resetCommentOnlyButton();
   progressiveState = "idle";
   commentOnlyState = "idle";
+  await initPreScanGuidance();
 
   const { accessToken } = await chrome.storage.local.get("accessToken");
 
@@ -178,6 +189,159 @@ if (document.readyState === "loading") {
 }
 
 // -----------------------------------------------------------------------
+// Rating guidance banners (entirely inside the side panel)
+// -----------------------------------------------------------------------
+async function initPreScanGuidance() {
+  try {
+    const r = await chrome.storage.local.get('sureshop_prescan_dismissed');
+    preScanGuidanceDismissed = !!r.sureshop_prescan_dismissed;
+  } catch (_) {}
+  const btn = document.getElementById('preScanDismissBtn');
+  if (btn && !btn._wired) {
+    btn._wired = true;
+    btn.addEventListener('click', dismissPreScanGuidance);
+  }
+}
+
+function showPreScanGuidance() {
+  if (preScanGuidanceDismissed) return;
+  const el = document.getElementById('preScanGuidance');
+  if (el) el.style.display = 'flex';
+}
+
+function hidePreScanGuidance() {
+  const el = document.getElementById('preScanGuidance');
+  if (el) el.style.display = 'none';
+}
+
+async function dismissPreScanGuidance() {
+  const el = document.getElementById('preScanGuidance');
+  if (el) {
+    el.classList.add('guidance-banner--dismissing');
+    setTimeout(() => {
+      el.style.display = 'none';
+      el.classList.remove('guidance-banner--dismissing');
+    }, 200);
+  }
+  preScanGuidanceDismissed = true;
+  try { await chrome.storage.local.set({ sureshop_prescan_dismissed: true }); } catch (_) {}
+}
+
+function getMidBannerEl() {
+  return document.getElementById('sureshop-mid-banner');
+}
+
+function showMidScanBanner(starLabel) {
+  if (scanTooltipCount >= 3) return;
+  if (midBannerVisible) return;
+  const panel = output.querySelector('.collecting-panel');
+  if (!panel) return;
+  const existing = getMidBannerEl();
+  if (existing) existing.remove();
+  scanTooltipCount++;
+  midBannerVisible = true;
+  midBannerDismissedByUser = false;
+  const subHtml = starLabel
+    ? `<div class="mid-banner-sub">Currently collecting: ${starLabel}-star reviews only</div>`
+    : '';
+  const el = document.createElement('div');
+  el.id = 'sureshop-mid-banner';
+  el.className = 'mid-scan-banner';
+  el.innerHTML = `
+    <span class="mid-banner-icon">&#x1F4A1;</span>
+    <div class="mid-banner-body">
+      <div class="mid-banner-msg">Looks like you may be viewing only one star rating tab. Switch between 1-star, 3-star, and 5-star reviews to improve your Confidence Rating.</div>
+      ${subHtml}
+    </div>
+    <button class="mid-banner-close" title="Dismiss">&#215;</button>
+  `;
+  el.querySelector('.mid-banner-close').addEventListener('click', () => {
+    midBannerDismissedByUser = true;
+    clearMidScanBanner();
+  });
+  panel.appendChild(el);
+}
+
+function clearMidScanBanner() {
+  midBannerVisible = false;
+  clearTimeout(midBannerReinforceTimer);
+  const el = getMidBannerEl();
+  if (el) el.remove();
+}
+
+function showPositiveReinforcement() {
+  const panel = output.querySelector('.collecting-panel');
+  if (!panel) return;
+  clearTimeout(midBannerReinforceTimer);
+  midBannerVisible = false;
+  dominantRatingWhenBannerShown = null;
+  const existing = getMidBannerEl();
+  const reinforce = document.createElement('div');
+  reinforce.id = 'sureshop-mid-banner';
+  reinforce.className = 'mid-scan-reinforce';
+  reinforce.innerHTML = `&#10003; New rating tab detected. Collecting additional reviews. Confidence Rating updating.`;
+  if (existing) { existing.replaceWith(reinforce); } else { panel.appendChild(reinforce); }
+  midBannerReinforceTimer = setTimeout(() => {
+    const r = getMidBannerEl();
+    if (r) r.remove();
+  }, 3000);
+}
+
+function resetGuidanceForNewScan() {
+  scanTooltipCount = 0;
+  scanStartTime = Date.now();
+  midBannerVisible = false;
+  midBannerDismissedByUser = false;
+  dominantRatingWhenBannerShown = null;
+  hidePreScanGuidance();
+  clearMidScanBanner();
+}
+
+function getDominantRating(reviews) {
+  if (!reviews || reviews.length === 0) return null;
+  const counts = {};
+  let rated = 0;
+  for (const r of reviews) {
+    const k = r.rating_stars != null ? String(r.rating_stars) : null;
+    if (k) { counts[k] = (counts[k] || 0) + 1; rated++; }
+  }
+  if (rated === 0) return null;
+  let maxK = null, maxV = 0;
+  for (const [k, v] of Object.entries(counts)) { if (v > maxV) { maxV = v; maxK = k; } }
+  return { star: maxK, pct: maxV / rated };
+}
+
+function checkMidScanTriggers(reviews) {
+  if (progressiveState !== 'scanning' && commentOnlyState !== 'scanning') return;
+  const dominant = getDominantRating(reviews);
+  const elapsed = scanStartTime ? (Date.now() - scanStartTime) / 1000 : 0;
+  // If banner is currently visible, check for tab switch → positive reinforcement
+  if (midBannerVisible && !midBannerDismissedByUser) {
+    if (dominant && dominantRatingWhenBannerShown && dominant.star !== dominantRatingWhenBannerShown) {
+      showPositiveReinforcement(); return;
+    }
+    if (dominant && dominantRatingWhenBannerShown && dominant.pct < 0.75) {
+      showPositiveReinforcement(); return;
+    }
+    return;
+  }
+  if (scanTooltipCount >= 3) return;
+  if (midBannerDismissedByUser) return;
+  let shouldShow = false;
+  let starLabel = null;
+  if (dominant && reviews.length >= 5 && dominant.pct >= 0.8) {
+    shouldShow = true; starLabel = dominant.star;
+  }
+  if (elapsed >= 30 && reviews.length < 10) {
+    shouldShow = true; starLabel = dominant?.star || null;
+  }
+  if (shouldShow) {
+    dominantRatingWhenBannerShown = starLabel;
+    showMidScanBanner(starLabel);
+  }
+}
+
+// -----------------------------------------------------------------------
 // Page status banner: tells the user whether the current tab is a
 // supported shopping platform and whether full product scan is available.
 // -----------------------------------------------------------------------
@@ -195,6 +359,7 @@ function refreshPageStatus() {
       scanBtn && (scanBtn.disabled = true);
       commentsBtn && (commentsBtn.disabled = true);
       commentOnlyBtn && (commentOnlyBtn.disabled = true);
+      hidePreScanGuidance();
       return;
     }
 
@@ -209,12 +374,19 @@ function refreshPageStatus() {
         commentOnlyBtn && (commentOnlyBtn.disabled = isFbProduct ? true : false);
         if (isFbProduct && commentsBtn) commentsBtn.title = 'Comment scan not available on Facebook Marketplace';
         if (isFbProduct && commentOnlyBtn) commentOnlyBtn.title = 'Comment scan not available on Facebook Marketplace';
+        // Show pre-scan guidance only on Shopee/Lazada when idle
+        if (!isFbProduct && progressiveState === 'idle' && commentOnlyState === 'idle') {
+          showPreScanGuidance();
+        } else {
+          hidePreScanGuidance();
+        }
       } else {
         banner.className = "page-status page-status--neutral";
         banner.innerHTML = `<i class="fas fa-search"></i><span>${platform.label} detected — open a product page to scan</span>`;
         scanBtn && (scanBtn.disabled = true);
         commentsBtn && (commentsBtn.disabled = true);
         commentOnlyBtn && (commentOnlyBtn.disabled = true);
+        hidePreScanGuidance();
       }
     } else {
       banner.className = "page-status page-status--supported";
@@ -222,6 +394,7 @@ function refreshPageStatus() {
       scanBtn && (scanBtn.disabled = true);
       commentsBtn && (commentsBtn.disabled = true);
       commentOnlyBtn && (commentOnlyBtn.disabled = true);
+      hidePreScanGuidance();
     }
   });
 }
@@ -981,6 +1154,7 @@ function performScan(isAutomatic = false, withReviews = false) {
                 currentTab.id,
                 { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
                 () => {
+                  resetGuidanceForNewScan();
                   setCommentsButtonState("scanning");
                   output.innerHTML = `<div class="collecting-panel"><div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div><div class="collecting-label">Scanning Comments&hellip;</div><div class="collecting-count">0 reviews collected</div></div>`;
                   output.style.padding = '10px 12px';
@@ -991,6 +1165,7 @@ function performScan(isAutomatic = false, withReviews = false) {
                 currentTab.id,
                 { type: "START_PROGRESSIVE_COLLECTION", scanData: productData },
                 () => {
+                  resetGuidanceForNewScan();
                   setCommentsButtonState("scanning");
                   output.innerHTML = `<div class="collecting-panel"><div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div><div class="collecting-label">Scanning Comments&hellip;</div><div class="collecting-count">0 reviews collected</div></div>`;
                   output.style.padding = '10px 12px';
@@ -1174,6 +1349,7 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === "SHOPEE_SCAN_UPDATED") {
     if (Array.isArray(message.reviews)) lastShopeeReviews = message.reviews;
+    checkMidScanTriggers(message.reviews || []);
     dbg("[Popup] Progressive update (collecting):", message.risk_score, message.risk_level, (message.reviews || []).length);
     const _spCount = (message.reviews || []).length;
     // Update the active button with a live count so the side panel shows progress
@@ -1203,6 +1379,8 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_STOPPED") {
+    clearMidScanBanner();
+    scanStartTime = null;
     setActiveCollectionState("stopped");
     let sr = message.risk_score !== undefined && message.risk_score !== null && message.risk_level
       ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastShopeeProductData?.description || null, productData: lastShopeeProductData, result: message.result || null }
@@ -1227,6 +1405,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_RESTARTED") {
+    resetGuidanceForNewScan();
     setActiveCollectionState("scanning");
     // Clear previous results so the side panel starts fresh
     lastShopeeReviews = [];
@@ -1252,6 +1431,7 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (message.type === "LAZADA_SCAN_UPDATED") {
     if (Array.isArray(message.reviews)) lastLazadaReviews = message.reviews;
+    checkMidScanTriggers(message.reviews || []);
     dbg("[Popup] Lazada progressive update (collecting):", message.risk_score, message.risk_level, (message.reviews || []).length);
     const _lzCount = (message.reviews || []).length;
     if (progressiveState === "scanning") {
@@ -1279,6 +1459,8 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "LAZADA_PROGRESSIVE_STOPPED") {
+    clearMidScanBanner();
+    scanStartTime = null;
     setActiveCollectionState("stopped");
     let lr = message.risk_score !== undefined && message.risk_score !== null && message.risk_level
       ? { risk_score: message.risk_score, risk_level: message.risk_level, description: lastLazadaProductData?.description || null, productData: lastLazadaProductData, result: message.result || null }
@@ -1298,6 +1480,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "LAZADA_PROGRESSIVE_RESTARTED") {
+    resetGuidanceForNewScan();
     setActiveCollectionState("scanning");
     // Clear previous results so the side panel starts fresh
     lastLazadaReviews = [];
@@ -1335,6 +1518,7 @@ function performCommentOnlyScan() {
     function doStart() {
       lastShopeeReviews = [];
       lastLazadaReviews = [];
+      resetGuidanceForNewScan();
       chrome.tabs.sendMessage(
         tabs[0].id,
         { type: "START_PROGRESSIVE_COLLECTION", scanData },
@@ -1431,6 +1615,7 @@ function setCommentsButtonState(state) {
     commentsBtn.disabled = false;
     progressiveState = "idle";
     stopCollectingPoll();
+    clearMidScanBanner();
   }
 }
 
@@ -1458,6 +1643,7 @@ function setCommentOnlyButtonState(state) {
     commentOnlyBtn.disabled = false;
     commentOnlyState = "idle";
     stopCollectingPoll();
+    clearMidScanBanner();
   }
 }
 

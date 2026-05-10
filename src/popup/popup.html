@@ -42,6 +42,17 @@
         <button id="commentsBtn"><i class="fas fa-layer-group"></i> Deep Scan</button>
         <button id="commentOnlyBtn"><i class="fas fa-comments"></i> Scan Comments</button>
       </div>
+
+      <!-- Pre-scan guidance banner: shown on Shopee/Lazada before Comments or Deep Scan -->
+      <div id="preScanGuidance" class="guidance-banner" style="display:none;">
+        <span class="guidance-banner-icon">&#x1F4A1;</span>
+        <div class="guidance-banner-body">
+          <div class="guidance-banner-title">Get Better Results</div>
+          <div class="guidance-banner-msg">While scanning, browse through different star rating tabs on the comments section. Switching between 1-star, 3-star, and 5-star reviews helps SureShopPH analyze a wider range of buyer feedback and improves your Confidence Rating.</div>
+        </div>
+        <button class="guidance-banner-close" id="preScanDismissBtn" title="Dismiss">&#215;</button>
+      </div>
+
       <div id="unbindMessage"></div>
 
       <div class="output-container">
