@@ -683,7 +683,22 @@
       const v = d[f];
       return v === null || v === undefined || v === '' || (typeof v === 'number' && isNaN(v));
     });
-    d.data_quality = { missing };
+    // Zero-inference: count fields absent from new listings are sent as 0 to the
+    // backend (a meaningful signal) instead of null. Recorded in inferred_zero so
+    // the UI can still display "Not found" for these fields.
+    const ZERO_INFER = {
+      shopee:   ['sold_count', 'rating', 'rating_count'],
+      lazada:   ['sold_count', 'rating', 'rating_count'],
+      facebook: [],
+    };
+    const inferred_zero = [];
+    for (const f of (ZERO_INFER[platform] || [])) {
+      if (d[f] === null || d[f] === undefined) {
+        d[f] = f === 'sold_count' ? '0' : 0;
+        inferred_zero.push(f);
+      }
+    }
+    d.data_quality = { missing, inferred_zero };
     return d;
   }
 

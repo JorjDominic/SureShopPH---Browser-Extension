@@ -72,6 +72,39 @@ const activateBtn = document.getElementById("activateBtn");
 const activationKeyInput = document.getElementById("activationKeyInput");
 const activationMessage = document.getElementById("activationMessage");
 
+// -----------------------------------------------------------------------
+// Zoom controls
+// -----------------------------------------------------------------------
+(function initZoom() {
+  const ZOOM_KEY   = "sureshop_zoom";
+  const ZOOM_STEP  = 0.1;
+  const ZOOM_MIN   = 1.0;   // 100% = default (max zoom-out)
+  const ZOOM_MAX   = 2.0;   // 200%
+  const root       = document.getElementById("popup-root");
+  const zoomInBtn  = document.getElementById("zoomInBtn");
+  const zoomOutBtn = document.getElementById("zoomOutBtn");
+  const zoomLabel  = document.getElementById("zoomLabel");
+
+  let zoom = parseFloat(localStorage.getItem(ZOOM_KEY)) || 1.0;
+  zoom = Math.min(Math.max(zoom, ZOOM_MIN), ZOOM_MAX);
+
+  function applyZoom() {
+    if (!root) return;
+    // CSS `zoom` affects layout (unlike transform), so the popup body
+    // expands naturally to fit the scaled content.
+    root.style.zoom = zoom;
+    if (zoomLabel) zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+    if (zoomOutBtn) zoomOutBtn.disabled = zoom <= ZOOM_MIN;
+    if (zoomInBtn)  zoomInBtn.disabled  = zoom >= ZOOM_MAX;
+    localStorage.setItem(ZOOM_KEY, zoom);
+  }
+
+  if (zoomInBtn)  zoomInBtn.addEventListener("click",  () => { zoom = Math.min(zoom + ZOOM_STEP, ZOOM_MAX); applyZoom(); });
+  if (zoomOutBtn) zoomOutBtn.addEventListener("click", () => { zoom = Math.max(zoom - ZOOM_STEP, ZOOM_MIN); applyZoom(); });
+
+  applyZoom();
+})();
+
 // Progressive collection state
 let lastShopeeProductData = null;
 let lastLazadaProductData = null;
@@ -635,7 +668,6 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   let botAnalysisHTML = '';
   // Use the whole comments/comment_analysis object so no field names are accidentally dropped.
   const caRaw = scanResult?.comment_analysis ?? scanResult?.comments ?? null;
-  console.log('[SureShop] showRiskAssessment scanResult.comments:', JSON.stringify(caRaw));
   const ca = caRaw ? {
     // Try every field name variant the backend might use for the analyzed count
     reviews_analyzed: caRaw.reviews_analyzed ?? caRaw.comments_analyzed ?? caRaw.total_comments ?? caRaw.analyzed_count ?? caRaw.num_analyzed ?? 0,
@@ -653,9 +685,72 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
           `<div class="flag-item"><i class="fas fa-exclamation-triangle"></i>${String(f).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
         ).join('')}</div>`
       : '';
+
+    // Dominant sentiment badge
+    const sentimentVal = caRaw.dominant_sentiment || null;
+    const sentimentClass = sentimentVal === 'positive' ? 'sentiment-positive'
+      : sentimentVal === 'suspicious' ? 'sentiment-suspicious'
+      : sentimentVal === 'mixed' ? 'sentiment-mixed'
+      : null;
+    const sentimentHTML = sentimentVal && sentimentClass
+      ? `<span class="sentiment-badge ${sentimentClass}">${sentimentVal}</span>`
+      : '';
+
+    // Review diversity score row
+    const diversityScore = caRaw.review_diversity_score != null ? Number(caRaw.review_diversity_score) : null;
+    const diversityClass = diversityScore == null ? '' : diversityScore >= 70 ? 'analysis-low' : diversityScore >= 40 ? 'analysis-medium' : 'analysis-high';
+    const diversityHTML = diversityScore != null
+      ? `<div class="analysis-row">
+            <span class="analysis-label">Review Diversity</span>
+            <span class="analysis-badge ${diversityClass}">${diversityScore} / 100</span>
+          </div>`
+      : '';
+
+    // Comment summary paragraph
+    const summaryMsg = caRaw.comment_summary?.summary_message
+      ? String(caRaw.comment_summary.summary_message).replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      : null;
+    const summaryHTML = summaryMsg
+      ? `<div class="bot-analysis-summary">${summaryMsg}</div>`
+      : '';
+
+    // Pages coverage warning callout
+    const coverageNote = caRaw.pages_coverage_note
+      ? String(caRaw.pages_coverage_note).replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      : null;
+    const coverageHTML = coverageNote
+      ? `<div class="coverage-callout"><i class="fas fa-exclamation-circle"></i> ${coverageNote}</div>`
+      : '';
+
+    // Review themes block
+    const themes = caRaw.review_themes?.themes_detected;
+    let reviewThemesHTML = '';
+    if (Array.isArray(themes) && themes.length) {
+      const themeSummary = caRaw.review_themes.summary_text
+        ? `<p class="themes-summary">${String(caRaw.review_themes.summary_text).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>`
+        : '';
+      const themeDisclaimer = caRaw.review_themes.disclaimer
+        ? `<p class="themes-disclaimer">${String(caRaw.review_themes.disclaimer).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>`
+        : '';
+      const themeChips = themes.map(t => {
+        const chipClass = t.sentiment === 'positive' ? 'theme-chip--positive'
+          : t.sentiment === 'negative' ? 'theme-chip--negative'
+          : 'theme-chip--mixed';
+        const countLabel = t.mention_count != null ? ` <span class="theme-chip-count">&times;${t.mention_count}</span>` : '';
+        return `<span class="theme-chip ${chipClass}">${String(t.label || '').replace(/</g,'&lt;').replace(/>/g,'&gt;')}${countLabel}</span>`;
+      }).join('');
+      reviewThemesHTML = `
+        <div class="review-themes-block">
+          <div class="review-themes-header"><i class="fas fa-tags"></i> Review Themes</div>
+          ${themeSummary}
+          <div class="review-themes-chips">${themeChips}</div>
+          ${themeDisclaimer}
+        </div>`;
+    }
+
     botAnalysisHTML = `
       <div class="bot-analysis-block">
-        <div class="bot-analysis-header"><i class="fas fa-robot"></i> Comment Analysis <span class="analysis-count">${ca.reviews_analyzed} reviewed</span></div>
+        <div class="bot-analysis-header"><i class="fas fa-robot"></i> Comment Analysis ${sentimentHTML}<span class="analysis-count">${ca.reviews_analyzed} reviewed</span></div>
         <div class="bot-analysis-rows">
           <div class="analysis-row">
             <span class="analysis-label">Bot Likelihood</span>
@@ -665,9 +760,13 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
             <span class="analysis-label">Fake Review Signals</span>
             <span class="analysis-badge ${fakeClass}">${ca.fake_review_pct}%</span>
           </div>
+          ${diversityHTML}
         </div>
+        ${summaryHTML}
         ${commentFlagsHTML}
-      </div>`;
+      </div>
+      ${coverageHTML}
+      ${reviewThemesHTML}`;
   }
 
   let dataRowsHTML = '';
@@ -692,20 +791,31 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     const isFb = platform === 'facebook';
     const platformIcons = { shopee: 'fa-store', lazada: 'fa-tag', facebook: 'fa-facebook' };
     const platformIcon = platformIcons[platform] || 'fa-store';
+    const inferredZero = productData.data_quality?.inferred_zero || [];
     const priceDisplay = productData.price !== null && productData.price !== undefined
       ? `₱${Number(productData.price).toLocaleString()}`
       : productData.price_is_variant
       ? 'Select a variant on the listing to determine price'
       : null;
-    const ratingDisplay = productData.rating !== null && productData.rating !== undefined
-      ? `${productData.rating} / 5 (${productData.rating_count !== null && productData.rating_count !== undefined ? productData.rating_count : 0} reviews)`
+    // Use inferred_zero to keep UI showing "Not found" for fields that were
+    // coerced to 0 for the backend but were never actually found on the page.
+    const ratingKnown = productData.rating !== null && productData.rating !== undefined
+      && !inferredZero.includes('rating');
+    const ratingCountKnown = productData.rating_count !== null && productData.rating_count !== undefined
+      && !inferredZero.includes('rating_count');
+    const ratingDisplay = ratingKnown
+      ? `${productData.rating} / 5 (${ratingCountKnown ? productData.rating_count : 0} reviews)`
+      : null;
+    const soldDisplay = productData.sold_count !== null && productData.sold_count !== undefined
+      && !inferredZero.includes('sold_count')
+      ? String(productData.sold_count)
       : null;
     dataRowsHTML = [
       row(platformIcon,          'Platform',      productData.platform),
       row('fa-link',             'URL',           productData.url),
       row('fa-box-open',         'Product',       productData.product_name,    true),
       row('fa-tag',              'Price',         priceDisplay,                true),
-      row('fa-fire',             'Sold',          productData.sold_count !== null && productData.sold_count !== undefined ? String(productData.sold_count) : null, isSh || isLa),
+      row('fa-fire',             'Sold',          soldDisplay, isSh || isLa),
       row('fa-user-tie',         'Seller',        productData.seller_name,     true),
       row('fa-certificate',      'Badges',        Array.isArray(productData.seller_badges) && productData.seller_badges.length > 0 ? productData.seller_badges.join(' · ') : null),
       row('fa-store',            'Mall',          productData.is_shopee_mall ? 'Shopee Mall' : productData.is_lazmall ? 'LazMall' : null),
@@ -841,7 +951,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
 
   if (reportListingBtn) {
     reportListingBtn.addEventListener('click', () => {
-      reportForm.style.display = reportForm.style.display === 'none' ? 'flex' : 'none';
+      reportForm.style.display = reportForm.style.display === 'none' ? '' : 'none';
     });
   }
 

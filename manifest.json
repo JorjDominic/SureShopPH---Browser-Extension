@@ -1,26 +1,25 @@
 {
   "manifest_version": 3,
   "default_locale": "en",
-  "name": "SureShopPH - Online Shopping Risk Detection",
-  "description": "Helps protect Filipino online shoppers from scams. Scans Shopee, Lazada, and Facebook Marketplace product listings for risk factors when you click Scan. Data is analyzed by the SureShop service. A privacy policy is available at the SureShop website.",
-  "version": "0.3",
+  "name": "SureShopPH - Online Shopping Risk Detection and Analysis",
+  "short_name": "SureShopPH",
+  "description": "Helps Filipino online shoppers identify potential risks in online shopping listings on Shopee, Lazada, and Facebook Marketplace. Analyzes product listings for observable risk signals when you click Scan. Data is processed by the SureShopPH service. Privacy policy available at sureshopph.site/privacy-policy",
+  "version": "0.3.0",
+  "minimum_chrome_version": "114",
+  "homepage_url": "https://www.sureshopph.site",
   "permissions": [
     "tabs",
     "activeTab",
     "scripting",
     "storage",
-    "sidePanel",
-    "contextMenus"
+    "sidePanel"
   ],
   "commands": {
     "_execute_action": {
       "suggested_key": { "default": "Alt+Shift+S" },
       "description": "Open SureShop side panel"
-    },
-    "scan-page": {
-      "suggested_key": { "default": "Alt+Shift+X" },
-      "description": "Trigger SureShop scan on the current page"
     }
+ 
   },
   "side_panel": {
     "default_path": "src/popup/popup.html"
@@ -29,7 +28,7 @@
     "https://*.shopee.ph/*",
     "https://*.lazada.com.ph/*",
     "https://*.facebook.com/marketplace/*",
-    "http://localhost/*"
+    "https://sureshopph-backend-layer-production.up.railway.app/*"
   ],
   "icons": {
     "16": "icons/icon16.png",
@@ -82,6 +81,10 @@
       "src/onboarding/onboarding.html",
       "src/shared/storage.js"
     ],
-    "matches": ["<all_urls>"]
+    "matches": [
+      "https://*.shopee.ph/*",
+      "https://*.lazada.com.ph/*",
+      "https://*.facebook.com/marketplace/*"
+    ]
   }]
 }

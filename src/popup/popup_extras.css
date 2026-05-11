@@ -149,6 +149,8 @@
 #output .scan-summary-section,
 #output .product-notice-block,
 #output .bot-analysis-block,
+#output .coverage-callout,
+#output .review-themes-block,
 #output .cdata-section,
 #output .scan-time,
 #output .report-section {
@@ -294,7 +296,8 @@
    ================================================================ */
 #output .report-section { margin-top: 5px !important; padding-top: 6px !important; border-top: 1px solid rgba(132,139,200,0.12) !important; }
 #output .report-btn     { font-size: 10.5px !important; padding: 5px 12px !important; border-radius: 7px !important; }
-#output .report-select, #output .report-textarea { font-size: 10.5px !important; }
+#output .report-form    { flex-direction: column !important; gap: 8px !important; width: 100% !important; box-sizing: border-box !important; }
+#output .report-select, #output .report-textarea { font-size: 10.5px !important; width: 100% !important; box-sizing: border-box !important; }
 #output .report-form-label  { font-size: 10.5px !important; margin-bottom: 3px !important; }
 #output .report-submit-btn,
 #output .report-cancel-btn  { font-size: 10.5px !important; padding: 4px 10px !important; }

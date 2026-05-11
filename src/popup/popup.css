@@ -76,6 +76,46 @@ html, body {
     z-index: 1;
 }
 
+/* ===== ZOOM CONTROLS ===== */
+.zoom-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 6px;
+    position: relative;
+    z-index: 1;
+}
+.zoom-btn {
+    background: rgba(255, 255, 255, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    color: var(--color-white);
+    border-radius: var(--border-radius-1);
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 10px;
+    padding: 0;
+    transition: background 0.2s ease;
+    line-height: 1;
+}
+.zoom-btn:hover { background: rgba(255, 255, 255, 0.32); }
+.zoom-btn:active { background: rgba(255, 255, 255, 0.45); }
+.zoom-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+.zoom-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    min-width: 32px;
+    text-align: center;
+}
+
 /* ===== ACTIVATION SECTION ===== */
 #activationSection {
     padding: var(--card-padding);
@@ -1363,6 +1403,134 @@ input:checked + .slider:before { transform: translateX(20px); }
 .analysis-badge.analysis-medium { color: #8a6a00; }
 .analysis-badge.analysis-high { color: #c0003c; }
 
+/* ===== COMMENT ANALYSIS — EXTENDED FIELDS ===== */
+
+/* Dominant sentiment badge in header */
+.sentiment-badge {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 2px 7px;
+    border-radius: 20px;
+}
+.sentiment-badge.sentiment-positive {
+    background: rgba(27, 156, 133, 0.15);
+    color: #138a73;
+    border: 1px solid rgba(27, 156, 133, 0.35);
+}
+.sentiment-badge.sentiment-mixed {
+    background: rgba(247, 208, 96, 0.2);
+    color: #8a6a00;
+    border: 1px solid rgba(247, 208, 96, 0.5);
+}
+.sentiment-badge.sentiment-suspicious {
+    background: rgba(255, 0, 96, 0.1);
+    color: #c0003c;
+    border: 1px solid rgba(255, 0, 96, 0.25);
+}
+
+/* Comment summary paragraph */
+.bot-analysis-summary {
+    font-size: 11px;
+    color: var(--color-dark-variant);
+    line-height: 1.5;
+    padding: 6px 10px 8px;
+    border-top: 1px solid rgba(132, 139, 200, 0.15);
+}
+
+/* Pages coverage warning callout */
+.coverage-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 7px 10px;
+    background: rgba(247, 208, 96, 0.15);
+    border: 1px solid rgba(247, 208, 96, 0.45);
+    border-radius: var(--border-radius-2);
+    font-size: 10.5px;
+    color: #8a6a00;
+    line-height: 1.4;
+}
+.coverage-callout i {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: #b8860b;
+}
+
+/* Review themes block */
+.review-themes-block {
+    background: var(--color-background);
+    border: 1px solid rgba(132, 139, 200, 0.22);
+    border-radius: var(--border-radius-2);
+    overflow: hidden;
+    margin-top: 6px;
+    text-align: left;
+}
+.review-themes-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    background: rgba(27, 156, 133, 0.07);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--color-primary-dark);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.review-themes-header i { color: var(--color-primary); }
+.themes-summary {
+    font-size: 11px;
+    color: var(--color-dark-variant);
+    line-height: 1.5;
+    padding: 7px 12px 4px;
+    margin: 0;
+}
+.review-themes-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 4px 12px 8px;
+}
+.theme-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+}
+.theme-chip--positive {
+    background: rgba(27, 156, 133, 0.12);
+    color: #138a73;
+    border: 1px solid rgba(27, 156, 133, 0.3);
+}
+.theme-chip--negative {
+    background: rgba(255, 0, 96, 0.09);
+    color: #c0003c;
+    border: 1px solid rgba(255, 0, 96, 0.22);
+}
+.theme-chip--mixed {
+    background: rgba(247, 208, 96, 0.18);
+    color: #8a6a00;
+    border: 1px solid rgba(247, 208, 96, 0.45);
+}
+.theme-chip-count {
+    opacity: 0.7;
+    font-weight: 500;
+}
+.themes-disclaimer {
+    font-size: 9.5px;
+    color: var(--color-info-dark);
+    padding: 0 12px 8px;
+    margin: 0;
+    line-height: 1.4;
+}
+
 /* ===== REPORT LISTING ===== */
 .report-section {
     border-top: 1px solid rgba(132, 139, 200, 0.2);
@@ -1396,6 +1564,7 @@ input:checked + .slider:before { transform: translateX(20px); }
     cursor: default;
 }
 .report-form {
+    display: flex;
     margin-top: 10px;
     flex-direction: column;
     gap: 8px;
