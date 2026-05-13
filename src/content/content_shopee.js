@@ -834,6 +834,18 @@ function showScanCard() {
     chrome.runtime.sendMessage({ type: "SHOPEE_PROGRESSIVE_RESTARTED" }).catch(() => {});
   }
 
+  function clampRiskScore(score) {
+    const n = Number(score);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(100, Math.round(n)));
+  }
+
+  function bandFromScore(score) {
+    if (score >= 76) return "High";
+    if (score >= 51) return "Medium";
+    return "Low";
+  }
+
   /**
    * Update the overlay to "actively scanning" state.
    * score/level may be null on the first call before any backend response.
@@ -913,8 +925,10 @@ function showScanCard() {
         // /analyze/comments returns only the comments analysis. Wrap it in
         // a deep-shaped envelope so the popup can render it via the same
         // path as a /analyze/deep response.
-        riskScore = null;
-        riskLevel = null;
+        const botScore = Number(result?.bot_likelihood_pct) || 0;
+        const fakeScore = Number(result?.fake_review_pct) || 0;
+        riskScore = clampRiskScore((botScore + fakeScore) / 2);
+        riskLevel = bandFromScore(riskScore);
         envelope = { comments: result, flags: result.flags || [] };
       }
 
@@ -936,6 +950,22 @@ function showScanCard() {
             url: location.href
           }
         });
+        dbg("[SureShop] cache written:", "product", riskScore);
+      }
+
+      if (!useDeep) {
+        await chrome.storage.local.set({
+          lastAutoScanResult: {
+            type: "comments",
+            risk_score: riskScore,
+            risk_level: riskLevel,
+            result: envelope,
+            description: progressiveScanData?.description || null,
+            timestamp: Date.now(),
+            url: location.href
+          }
+        });
+        dbg("[SureShop] cache written:", "comments", riskScore);
       }
 
       // Notify popup if it is currently open

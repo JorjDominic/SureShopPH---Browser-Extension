@@ -115,6 +115,8 @@ let lastLazadaReviews = [];
 let progressiveState     = "idle"; // controls commentsBtn (Deep Scan)
 let commentOnlyState     = "idle"; // controls commentOnlyBtn (Scan Comments)
 let collectingPollInterval = null; // polls review count from content script while scanning
+let pendingStopFallbackTimer = null;
+let pendingStopPlatform = null;
 
 // Guidance banner state
 let scanTooltipCount = 0;
@@ -155,6 +157,69 @@ function stopCollectingPoll() {
     clearInterval(collectingPollInterval);
     collectingPollInterval = null;
   }
+}
+
+function clearStopFallbackTimer() {
+  if (pendingStopFallbackTimer) {
+    clearTimeout(pendingStopFallbackTimer);
+    pendingStopFallbackTimer = null;
+  }
+  pendingStopPlatform = null;
+}
+
+function setCollectingStoppingState() {
+  const panel = output.querySelector('.collecting-panel');
+  if (!panel) return;
+  const iconEl = panel.querySelector('.collecting-icon i');
+  const labelEl = panel.querySelector('.collecting-label');
+  if (iconEl) iconEl.className = 'fas fa-hourglass-half';
+  if (labelEl) labelEl.textContent = 'Stopping collection...';
+}
+
+function inferPlatformFromUrl(url) {
+  if (!url) return null;
+  if (url.includes('lazada.com.ph')) return 'lazada';
+  if (url.includes('shopee.ph')) return 'shopee';
+  return null;
+}
+
+function setActiveCollectionState(state) {
+  if (progressiveState  !== "idle") setCommentsButtonState(state);
+  if (commentOnlyState  !== "idle") setCommentOnlyButtonState(state);
+  if (progressiveState === "idle" && commentOnlyState === "idle") setCommentsButtonState(state);
+}
+
+function runStopFallback(platform) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (!tabs[0]) return;
+    chrome.tabs.sendMessage(tabs[0].id, { type: "GET_PROGRESSIVE_REVIEWS" }, (resp) => {
+      if (chrome.runtime.lastError) {
+        dbg("[Popup] Stop fallback GET_PROGRESSIVE_REVIEWS failed:", chrome.runtime.lastError.message);
+        return;
+      }
+      const reviews = Array.isArray(resp?.reviews) ? resp.reviews : [];
+      const isLazada = platform === 'lazada';
+      const productData = isLazada ? lastLazadaProductData : lastShopeeProductData;
+      const baseSr = lastDeepScanInitialResult || null;
+      if (isLazada) {
+        lastLazadaReviews = reviews;
+      } else {
+        lastShopeeReviews = reviews;
+      }
+      dbg("[Popup] Stop fallback triggered:", platform, "reviews=", reviews.length);
+      analyzeCommentsFromPopup(reviews, productData, baseSr, isLazada ? 'lazada' : 'shopee');
+    });
+  });
+}
+
+function scheduleStopFallback(platform) {
+  clearStopFallbackTimer();
+  pendingStopPlatform = platform;
+  pendingStopFallbackTimer = setTimeout(() => {
+    const fallbackPlatform = pendingStopPlatform;
+    clearStopFallbackTimer();
+    runStopFallback(fallbackPlatform || platform);
+  }, 1500);
 }
 
 function showActivationMessage(text, isError = true) {
@@ -433,27 +498,41 @@ function refreshPageStatus() {
 }
 
 function checkForAutoScanResults() {
-  // Check if there are recent auto-scan results to display - ONLY PRODUCT SCANS
+  // Check if there are recent auto-scan results to display (product or comments)
   chrome.storage.local.get("lastAutoScanResult", ({ lastAutoScanResult }) => {
     if (lastAutoScanResult && isRecentResult(lastAutoScanResult.timestamp)) {
       dbg("=== SCAN DATA SNAPSHOT: lastAutoScanResult from storage ===");
       dbg(JSON.stringify(lastAutoScanResult, null, 2));
-      
-      // ONLY show PRODUCT scan results in the extension popup
+
       if (lastAutoScanResult.type === "product") {
-        dbg("Displaying product scan result");
+        dbg("[Popup] cache restored:", lastAutoScanResult.type, lastAutoScanResult.risk_score);
         showRiskAssessment(
           lastAutoScanResult.risk_score, 
           lastAutoScanResult.risk_level,
-          lastAutoScanResult.description || null
+          lastAutoScanResult.description || null,
+          null,
+          lastAutoScanResult.result || null
+        );
+      } else if (lastAutoScanResult.type === "comments") {
+        const env = lastAutoScanResult.result || null;
+        const derived = synthesizeCommentOnlyEnvelope(env?.comments || env?.comment_analysis || null);
+        const score = Number.isFinite(Number(lastAutoScanResult.risk_score))
+          ? Math.max(0, Math.min(100, Math.round(Number(lastAutoScanResult.risk_score))))
+          : (derived?.risk_score ?? 0);
+        const level = lastAutoScanResult.risk_level || derived?.risk_level || bandFromScore(score);
+        dbg("[Popup] cache restored:", lastAutoScanResult.type, score);
+        showRiskAssessment(
+          score,
+          level,
+          lastAutoScanResult.description || null,
+          null,
+          env
         );
       } else {
-        dbg("Ignoring non-product scan result in extension popup:", lastAutoScanResult.type);
-        // Don't show URL scan results in the extension popup
-        // URL scan results are shown in the universal popup on the webpage
+        dbg("[Popup] Unsupported cache type:", lastAutoScanResult.type);
       }
     } else {
-      dbg("No recent product scan results found");
+      dbg("No recent scan results found");
     }
   });
 }
@@ -573,6 +652,16 @@ function computeConfidence(productData) {
 
 // Clean function to show only PRODUCT risk assessment
 function showRiskAssessment(riskScore, riskLevel, description, productData = null, scanResult = null) {
+  const commentsEnvelope = scanResult?.comments || scanResult?.comment_analysis || null;
+  const commentsDerived = commentsEnvelope ? synthesizeCommentOnlyEnvelope(commentsEnvelope) : null;
+  let safeRiskScore = Number.isFinite(Number(riskScore))
+    ? Math.max(0, Math.min(100, Math.round(Number(riskScore))))
+    : null;
+  if (safeRiskScore === null && commentsDerived) safeRiskScore = commentsDerived.risk_score;
+  if (safeRiskScore === null) safeRiskScore = 0;
+  let safeRiskLevel = riskLevel || commentsDerived?.risk_level || bandFromScore(safeRiskScore);
+  safeRiskLevel = ["High", "Medium", "Low"].includes(safeRiskLevel) ? safeRiskLevel : bandFromScore(safeRiskScore);
+
   const timestamp = new Date().toLocaleString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -583,9 +672,9 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
 
   // Use backend risk message if available; fall back to hardcoded strings
   const riskMessage = scanResult?.risk_message
-    || (riskLevel === 'High'
+    || (safeRiskLevel === 'High'
         ? 'This product appears risky. Exercise extreme caution and consider avoiding this purchase.'
-        : riskLevel === 'Medium'
+      : safeRiskLevel === 'Medium'
         ? 'This product has some risk factors. Please review carefully before purchasing.'
         : 'This product appears to be relatively safe based on current analysis.');
 
@@ -675,8 +764,9 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     fake_review_pct: caRaw.fake_review_pct ?? caRaw.fake_score ?? 0,
     flags: caRaw.flags || [],
   } : null;
-  // Show block when any comment analysis data exists (percentages present even if count is 0/unknown)
-  if (ca && (ca.reviews_analyzed > 0 || ca.bot_likelihood_pct > 0 || ca.fake_review_pct > 0)) {
+  // Show block when analysis exists or backend summary is present.
+  const hasBackendSummary = !!(caRaw && typeof caRaw.summary === 'string' && caRaw.summary.trim());
+  if (ca && (ca.reviews_analyzed > 0 || ca.bot_likelihood_pct > 0 || ca.fake_review_pct > 0 || hasBackendSummary)) {
     const botClass  = ca.bot_likelihood_pct  >= 50 ? 'analysis-high' : ca.bot_likelihood_pct  >= 25 ? 'analysis-medium' : 'analysis-low';
     const fakeClass = ca.fake_review_pct >= 50 ? 'analysis-high' : ca.fake_review_pct >= 25 ? 'analysis-medium' : 'analysis-low';
     const commentFlags = ca.flags;
@@ -706,13 +796,13 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
           </div>`
       : '';
 
-    // Comment summary paragraph
-    const summaryMsg = caRaw.comment_summary?.summary_message
-      ? String(caRaw.comment_summary.summary_message).replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      : null;
-    const summaryHTML = summaryMsg
-      ? `<div class="bot-analysis-summary">${summaryMsg}</div>`
-      : '';
+    // Comment summary paragraph: always use backend-provided summary.
+    // Keep comment_summary object for diagnostics only.
+    const _commentSummaryDiagnostics = caRaw.comment_summary || null;
+    console.debug("[Popup] summary_source:", caRaw.summary_source, "summary:", caRaw.summary);
+    const backendSummary = typeof caRaw.summary === 'string' ? caRaw.summary.trim() : '';
+    const visibleSummary = backendSummary || 'Groq summary unavailable for this scan.';
+    const summaryHTML = `<div class="bot-analysis-summary">${String(visibleSummary).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
 
     // Pages coverage warning callout
     const coverageNote = caRaw.pages_coverage_note
@@ -887,14 +977,14 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
         <i class="fas fa-shield-alt"></i> PRODUCT SCANNED
       </div>
 
-      <div class="risk-badge risk-${riskLevel.toLowerCase()}"></div>
+      <div class="risk-badge risk-${safeRiskLevel.toLowerCase()}"></div>
 
-      <div class="risk-level-text risk-${riskLevel.toLowerCase()}">
-        PRODUCT RISK: ${riskLevel.toUpperCase()}
+      <div class="risk-level-text risk-${safeRiskLevel.toLowerCase()}">
+        PRODUCT RISK: ${safeRiskLevel.toUpperCase()}
       </div>
 
       <div class="risk-score-text">
-        Risk Score: ${riskScore} / 100
+        Risk Score: ${safeRiskScore} / 100
       </div>
 
       ${confidenceHTML}
@@ -1064,6 +1154,9 @@ function performScan(isAutomatic = false, withReviews = false) {
     if (withReviews) {
       commentsBtn.innerHTML = '<i class="fas fa-sync spinning"></i> Deep scanning...';
       commentsBtn.disabled = true;
+      // Lock comment-only button during deep scan
+      commentOnlyBtn.disabled = true;
+      commentOnlyBtn.style.opacity = '0.5';
     }
     scanBtn.disabled = true;
     output.textContent = "🔍 Collecting product information...";
@@ -1246,6 +1339,7 @@ function performScan(isAutomatic = false, withReviews = false) {
           };
 
           await chrome.storage.local.set(storageData);
+          dbg("[Popup] cache written:", "product", result.risk_score);
 
           if (!withReviews) {
             // Normal scan: show result immediately
@@ -1420,6 +1514,20 @@ async function analyzeCommentsFromPopup(reviews, productData, baseSr, platform) 
       productData: productData || baseSr?.productData,
       result: mergedResult
     };
+    const hasListing = !!(productData || baseSr?.productData);
+    const cacheType = hasListing ? 'product' : 'comments';
+    await chrome.storage.local.set({
+      lastAutoScanResult: {
+        type: cacheType,
+        risk_score: Number.isFinite(Number(sr.risk_score)) ? Math.max(0, Math.min(100, Math.round(Number(sr.risk_score)))) : (synthesizeCommentOnlyEnvelope(sr.result?.comments || sr.result?.comment_analysis)?.risk_score || 0),
+        risk_level: sr.risk_level || bandFromScore(Number.isFinite(Number(sr.risk_score)) ? Number(sr.risk_score) : 0),
+        result: sr.result,
+        description: sr.description || null,
+        timestamp: Date.now(),
+        url: (sr.productData && sr.productData.url) || null,
+      }
+    });
+    dbg("[Popup] cache written:", cacheType, sr.risk_score);
     showRiskAssessment(sr.risk_score, sr.risk_level, sr.description, sr.productData, sr.result);
     // showRiskAssessment clears output — re-append collected reviews
     appendReviewsToOutput(reviews, platform === 'lazada');
@@ -1449,14 +1557,6 @@ function synthesizeCommentOnlyEnvelope(commentsResult) {
 // the Shopee content script finishes re-analyzing a new review page.
 // -----------------------------------------------------------------------
 chrome.runtime.onMessage.addListener((message) => {
-  // Helper: update whichever button(s) are currently in scanning/stopped state
-  function setActiveCollectionState(state) {
-    if (progressiveState  !== "idle") setCommentsButtonState(state);
-    if (commentOnlyState  !== "idle") setCommentOnlyButtonState(state);
-    // If neither was active (e.g. restarted from page overlay), default to Deep Scan
-    if (progressiveState === "idle" && commentOnlyState === "idle") setCommentsButtonState(state);
-  }
-
   if (message.type === "SHOPEE_SCAN_UPDATED") {
     if (Array.isArray(message.reviews)) lastShopeeReviews = message.reviews;
     checkMidScanTriggers(message.reviews || []);
@@ -1489,6 +1589,8 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_STOPPED") {
+    dbg("[Popup] stopped message received:", message.type);
+    clearStopFallbackTimer();
     clearMidScanBanner();
     scanStartTime = null;
     setActiveCollectionState("stopped");
@@ -1569,6 +1671,8 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (message.type === "LAZADA_PROGRESSIVE_STOPPED") {
+    dbg("[Popup] stopped message received:", message.type);
+    clearStopFallbackTimer();
     clearMidScanBanner();
     scanStartTime = null;
     setActiveCollectionState("stopped");
@@ -1624,6 +1728,9 @@ function performCommentOnlyScan() {
 
     commentOnlyBtn.innerHTML = '<i class="fas fa-sync spinning"></i> Starting...';
     commentOnlyBtn.disabled = true;
+    // Lock deep scan button during comment-only scan
+    commentsBtn.disabled = true;
+    commentsBtn.style.opacity = '0.5';
 
     function doStart() {
       lastShopeeReviews = [];
@@ -1668,8 +1775,21 @@ function performCommentOnlyScan() {
 
 commentOnlyBtn.addEventListener("click", () => {
   if (commentOnlyState === "scanning") {
+    dbg("[Popup] stop clicked: comment-only");
+    setCommentOnlyButtonState("stopped");
+    setCollectingStoppingState();
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "STOP_PROGRESSIVE_COLLECTION" });
+      if (tabs[0]) {
+        const platform = inferPlatformFromUrl(tabs[0].url) || "shopee";
+        scheduleStopFallback(platform);
+        chrome.tabs.sendMessage(tabs[0].id, { type: "STOP_PROGRESSIVE_COLLECTION" }, () => {
+          if (chrome.runtime.lastError) {
+            dbg("[Popup] Stop message failed:", chrome.runtime.lastError.message);
+            clearStopFallbackTimer();
+            runStopFallback(platform);
+          }
+        });
+      }
     });
     return;
   }
@@ -1709,6 +1829,9 @@ function setCommentsButtonState(state) {
     commentsBtn.style.color = '#fff';
     commentsBtn.style.borderColor = '#e74c3c';
     commentsBtn.disabled = false;
+    // Lock comment-only button while deep scan is running
+    commentOnlyBtn.disabled = true;
+    commentOnlyBtn.style.opacity = '0.5';
     startCollectingPoll();
   } else if (state === "stopped") {
     commentsBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Collection';
@@ -1716,6 +1839,11 @@ function setCommentsButtonState(state) {
     commentsBtn.style.color = '#fff';
     commentsBtn.style.borderColor = '#1b9c85';
     commentsBtn.disabled = false;
+    // Re-enable comment-only button if not scanning
+    if (commentOnlyState === "idle") {
+      commentOnlyBtn.disabled = false;
+      commentOnlyBtn.style.opacity = '';
+    }
     stopCollectingPoll();
   } else {
     commentsBtn.innerHTML = '<i class="fas fa-layer-group"></i> Deep Scan';
@@ -1724,6 +1852,11 @@ function setCommentsButtonState(state) {
     commentsBtn.style.borderColor = '';
     commentsBtn.disabled = false;
     progressiveState = "idle";
+    // Re-enable comment-only button
+    if (commentOnlyState === "idle") {
+      commentOnlyBtn.disabled = false;
+      commentOnlyBtn.style.opacity = '';
+    }
     stopCollectingPoll();
     clearMidScanBanner();
   }
@@ -1737,6 +1870,9 @@ function setCommentOnlyButtonState(state) {
     commentOnlyBtn.style.color = '#fff';
     commentOnlyBtn.style.borderColor = '#e74c3c';
     commentOnlyBtn.disabled = false;
+    // Lock deep scan button while comment-only scan is running
+    commentsBtn.disabled = true;
+    commentsBtn.style.opacity = '0.5';
     startCollectingPoll();
   } else if (state === "stopped") {
     commentOnlyBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Collection';
@@ -1744,6 +1880,11 @@ function setCommentOnlyButtonState(state) {
     commentOnlyBtn.style.color = '#fff';
     commentOnlyBtn.style.borderColor = '#1b9c85';
     commentOnlyBtn.disabled = false;
+    // Re-enable deep scan button if not scanning
+    if (progressiveState === "idle") {
+      commentsBtn.disabled = false;
+      commentsBtn.style.opacity = '';
+    }
     stopCollectingPoll();
   } else {
     commentOnlyBtn.innerHTML = '<i class="fas fa-comments"></i> Scan Comments';
@@ -1752,6 +1893,11 @@ function setCommentOnlyButtonState(state) {
     commentOnlyBtn.style.borderColor = '';
     commentOnlyBtn.disabled = false;
     commentOnlyState = "idle";
+    // Re-enable deep scan button
+    if (progressiveState === "idle") {
+      commentsBtn.disabled = false;
+      commentsBtn.style.opacity = '';
+    }
     stopCollectingPoll();
     clearMidScanBanner();
   }
@@ -1759,10 +1905,20 @@ function setCommentOnlyButtonState(state) {
 
 commentsBtn.addEventListener("click", () => {
   if (progressiveState === "scanning") {
-    // User stops collection
+    dbg("[Popup] stop clicked: deep-scan");
+    setCommentsButtonState("stopped");
+    setCollectingStoppingState();
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: "STOP_PROGRESSIVE_COLLECTION" });
+        const platform = inferPlatformFromUrl(tabs[0].url) || "shopee";
+        scheduleStopFallback(platform);
+        chrome.tabs.sendMessage(tabs[0].id, { type: "STOP_PROGRESSIVE_COLLECTION" }, () => {
+          if (chrome.runtime.lastError) {
+            dbg("[Popup] Stop message failed:", chrome.runtime.lastError.message);
+            clearStopFallbackTimer();
+            runStopFallback(platform);
+          }
+        });
       }
     });
     return;
@@ -1911,8 +2067,11 @@ function resetCommentOnlyButton() {
 function resetButton() {
   scanBtn.innerHTML = '<i class="fas fa-shield-alt"></i> Normal Scan';
   scanBtn.disabled = false;
-  // Only reset commentsBtn if progressive collection hasn't started
+  // Only reset buttons if progressive collection hasn't started
   if (progressiveState === "idle") {
     resetCommentsButton();
+  }
+  if (commentOnlyState === "idle") {
+    resetCommentOnlyButton();
   }
 }

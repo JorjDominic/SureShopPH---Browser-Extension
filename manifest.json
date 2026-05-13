@@ -12,7 +12,8 @@
     "activeTab",
     "scripting",
     "storage",
-    "sidePanel"
+    "sidePanel",
+    "contextMenus"
   ],
   "commands": {
     "_execute_action": {
@@ -28,7 +29,7 @@
     "https://*.shopee.ph/*",
     "https://*.lazada.com.ph/*",
     "https://*.facebook.com/marketplace/*",
-    "https://sureshopph-backend-layer-production.up.railway.app/*"
+    "http://localhost:8000/*"
   ],
   "icons": {
     "16": "icons/icon16.png",

@@ -321,6 +321,53 @@
     const innerText = document.body.innerText || "";
     const textContent = (document.body.textContent || "").replace(/\s+/g, " ");
 
+    const soldSelectors = [
+      '[class*="sold"]',
+      '[class*="sales"]',
+      '[class*="quantity"]',
+      '[data-spm*="sold"]',
+      '[data-spm*="sales"]',
+      '[class*="pdp-review-summary"]'
+    ];
+
+    const parseSoldText = raw => {
+      if (!raw) return null;
+      const src = cleanText(raw).replace(/\u00a0/g, " ");
+      const matchers = [
+        /([\d.,]+\s*[KkMm]?\+?)\s*(?:items?\s*)?sold\b/i,
+        /\bsold[:\s]+([\d.,]+\s*[KkMm]?\+?)/i,
+        /quantity\s+sold[:\s]+([\d.,]+\s*[KkMm]?\+?)/i,
+        /\b([\d.,]+\s*[KkMm]?\+?)sold\b/i,
+        /\bsold\s*([\d.,]+\s*[KkMm]?\+?)/i,
+        /([\d.,]+\s*[KkMm]?\+?)\s*(?:units?|pcs?)\b/i
+      ];
+      for (const re of matchers) {
+        const m = src.match(re);
+        if (m) {
+          const value = expandAbbrev(m[1].trim());
+          if (value) return value;
+        }
+      }
+      return null;
+    };
+
+    for (const selector of soldSelectors) {
+      for (const el of [...document.querySelectorAll(selector)]) {
+        const candidates = [
+          el.textContent,
+          el.parentElement?.textContent,
+          el.previousElementSibling?.textContent,
+          el.nextElementSibling?.textContent,
+          el.parentElement?.previousElementSibling?.textContent,
+          el.parentElement?.nextElementSibling?.textContent,
+        ];
+        for (const candidate of candidates) {
+          const value = parseSoldText(candidate);
+          if (value && value !== "0") return { value, confidence: "high" };
+        }
+      }
+    }
+
     const expandAbbrev = raw => {
       const m = raw.replace(/[,\s]/g, "").match(/^([\d.]+)([KkMm]?)\+?$/);
       if (!m) return raw;
@@ -333,12 +380,15 @@
     // Try a series of patterns on both innerText and textContent.
     // Order matters — most specific first.
     const patterns = [
-      // "34K+ Sold", "1.2K Sold", "1,234 Sold", "34K+ items sold", "34 item sold"
-      /([\d.,]+\s*[KkMm]?\+?)\s+(?:items?\s+)?sold\b/i,
+      // "34K+ Sold", "34K+Sold", "1.2K Sold", "1,234 Sold", "34K+ items sold", "34 item sold"
+      /([\d.,]+\s*[KkMm]?\+?)\s*(?:items?\s*)?sold\b/i,
       // "Sold: 1,234", "Sold 1.2K"
       /\bsold[:\s]+([\d.,]+\s*[KkMm]?\+?)/i,
       // "Quantity Sold 1,234"
-      /quantity\s+sold[:\s]+([\d.,]+\s*[KkMm]?\+?)/i
+      /quantity\s+sold[:\s]+([\d.,]+\s*[KkMm]?\+?)/i,
+      // "Sold1,234" or "1,234Sold" with no separator in concatenated text nodes
+      /\b([\d.,]+\s*[KkMm]?\+?)sold\b/i,
+      /\bsold\s*([\d.,]+\s*[KkMm]?\+?)/i
     ];
 
     for (const src of [innerText, textContent]) {
@@ -377,9 +427,21 @@
 
     let rating = null;
     let ratingEl = null;
+    const ratingCandidates = [...document.querySelectorAll(
+      '[class*="rating"] span, [class*="review-summary"] span, [class*="score"] span, [class*="average"] span, [class*="stars"] + span, [class*="stars"] ~ span'
+    )];
+    for (const el of ratingCandidates) {
+      const txt = cleanText(el.textContent || "");
+      const exact = txt.match(/^([1-5](?:\.[0-9])?)\s*(?:\/\s*5)?$/);
+      if (exact) {
+        rating = { value: Number(exact[1]), confidence: "high" };
+        ratingEl = el;
+        break;
+      }
+    }
     for (const sel of ratingSelectors) {
       const el = document.querySelector(sel);
-      if (el) {
+      if (el && !rating) {
         const val = parseFloat(cleanText(el.textContent));
         if (!isNaN(val) && val >= 0 && val <= 5) {
           rating = { value: val, confidence: "high" };
@@ -391,7 +453,9 @@
 
     const text = document.body.innerText;
     if (!rating) {
-      const ratingMatch = text.match(/\b([0-5]\.\d)\b/);
+      const ratingSectionIdx = text.search(/Ratings?\s*&\s*Reviews?|Customer\s+Reviews?|Product\s+Ratings?/i);
+      const ratingContext = ratingSectionIdx !== -1 ? text.slice(ratingSectionIdx, ratingSectionIdx + 500) : text.slice(0, 5000);
+      const ratingMatch = ratingContext.match(/\b([1-5](?:\.\d)?)\s*(?:\/\s*5)?\b/);
       rating = ratingMatch
         ? { value: Number(ratingMatch[1]), confidence: "medium" }
         : { value: null, confidence: "low" };
@@ -443,7 +507,9 @@
       if (inlineM) rating_count = { value: parseInt(inlineM[1].replace(/,/g, ""), 10), confidence: "high" };
     }
     if (!rating_count.value) {
-      const wordM = text.match(/\(?(\d[\d,]*)\s+Ratings?\)?/i);
+      const ratingSectionIdx = text.search(/Ratings?\s*&\s*Reviews?|Customer\s+Reviews?|Product\s+Ratings?/i);
+      const ratingContext = ratingSectionIdx !== -1 ? text.slice(ratingSectionIdx, ratingSectionIdx + 500) : text.slice(0, 5000);
+      const wordM = ratingContext.match(/\(?(\d[\d,]{2,})\s+Ratings?\)?/i);
       if (wordM) rating_count = { value: parseInt(wordM[1].replace(/,/g, ""), 10), confidence: "high" };
     }
 
@@ -1345,6 +1411,11 @@
     const price = extractMainPrice();
     const sold = extractSoldCount();
     const ratings = extractRatings();
+    const soldValue = (sold.value !== null && sold.value !== undefined)
+      ? sold.value
+      : (ratings.rating_count.value !== null && ratings.rating_count.value !== undefined
+        ? String(ratings.rating_count.value)
+        : null);
     const sellerName = extractSellerName();
     const sellerRating = extractSellerRating();
     const sellerBadges = extractSellerBadges();
@@ -1360,7 +1431,7 @@
         ? cleanText(document.title).replace(/ \| Lazada.*$/i, "").trim()
         : "Unknown Product",
       price: price.value,
-      sold_count: sold.value,
+      sold_count: soldValue,
       rating: ratings.rating.value,
       rating_count: ratings.rating_count.value,
       seller_name: sellerName.value,
@@ -1518,6 +1589,18 @@
     chrome.runtime.sendMessage({ type: "LAZADA_PROGRESSIVE_RESTARTED" }).catch(() => {});
   }
 
+  function clampRiskScore(score) {
+    const n = Number(score);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(100, Math.round(n)));
+  }
+
+  function bandFromScore(score) {
+    if (score >= 76) return "High";
+    if (score >= 51) return "Medium";
+    return "Low";
+  }
+
   /**
    * Update the overlay to "actively scanning" state.
    * score/level may be null on the first call before any backend response.
@@ -1594,8 +1677,10 @@
         riskLevel = result.combined_risk_level ?? result.risk_level;
         envelope = result;
       } else {
-        riskScore = null;
-        riskLevel = null;
+        const botScore = Number(result?.bot_likelihood_pct) || 0;
+        const fakeScore = Number(result?.fake_review_pct) || 0;
+        riskScore = clampRiskScore((botScore + fakeScore) / 2);
+        riskLevel = bandFromScore(riskScore);
         envelope = { comments: result, flags: result.flags || [] };
       }
 
@@ -1617,6 +1702,22 @@
             url: location.href
           }
         });
+        dbg("[SureShop] cache written:", "product", riskScore);
+      }
+
+      if (!useDeep) {
+        await chrome.storage.local.set({
+          lastAutoScanResult: {
+            type: "comments",
+            risk_score: riskScore,
+            risk_level: riskLevel,
+            result: envelope,
+            description: progressiveScanData?.description || null,
+            timestamp: Date.now(),
+            url: location.href
+          }
+        });
+        dbg("[SureShop] cache written:", "comments", riskScore);
       }
 
       // Notify popup if it is currently open
