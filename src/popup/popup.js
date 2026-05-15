@@ -278,12 +278,19 @@ async function checkAuthStatus() {
 
 // Defer until DOMContentLoaded so all const-declared button refs lower in the
 // file have been initialized (avoids ReferenceError TDZ on commentsBtn etc.)
+function initWebsiteLink() {
+  document.getElementById('websiteLink')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: 'https://www.sureshopph.site' });
+  });
+}
+
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () => checkAuthStatus());
+  document.addEventListener("DOMContentLoaded", () => { checkAuthStatus(); initWebsiteLink(); });
 } else {
   // Document already parsed — schedule on next microtask so const declarations
   // appearing later in this script have all evaluated first.
-  Promise.resolve().then(() => checkAuthStatus());
+  Promise.resolve().then(() => { checkAuthStatus(); initWebsiteLink(); });
 }
 
 // -----------------------------------------------------------------------
@@ -728,17 +735,15 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   let scanSummaryHTML = '';
   if (summaryFlags.length) {
     scanSummaryHTML = summaryFlags
-      .map(f => `<div class="flag-item"><i class="fas fa-exclamation-triangle"></i>${f}</div>`)
+      .map(f => {
+        const safe = String(f).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const text = safe.length > 90 ? safe.slice(0, 90) + '…' : safe;
+        return `<div class="flag-item"><i class="fas fa-exclamation-triangle"></i>${text}</div>`;
+      })
       .join('');
   }
-  const scanSummarySection = scanSummaryHTML
-    ? `<div class="scan-summary-section" id="scanSummary">
-        <div class="scan-summary-header"><i class="fas fa-clipboard-list"></i> Scan Summary</div>
-        <div class="scan-summary-body">${scanSummaryHTML}</div>
-      </div>`
-    : '';
 
-  // Product Notice — authenticity / edition indicators (separate from risk score)
+  // Product Notice — computed before scanSummarySection so it can be embedded inside it
   let productNoticeHTML = '';
   if (scanResult?.product_notice) {
     const pn = scanResult.product_notice;
@@ -752,6 +757,19 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
         <div class="product-notice-disclaimer">${pn.disclaimer}</div>
       </div>`;
   }
+
+  const scanSummarySection = (scanSummaryHTML || productNoticeHTML)
+    ? `<div class="scan-summary-section" id="scanSummary">
+        <button class="scan-summary-header section-toggle" aria-expanded="false">
+          <span><i class="fas fa-flag"></i> Risk Analysis</span>
+          <span class="section-toggle-meta">
+            ${summaryFlags.length ? `<span class="section-flag-count">${summaryFlags.length} flag${summaryFlags.length !== 1 ? 's' : ''}</span>` : ''}
+            <i class="fas fa-chevron-down section-toggle-icon"></i>
+          </span>
+        </button>
+        <div class="scan-summary-body section-collapsible" style="display:none;">${scanSummaryHTML}${productNoticeHTML}</div>
+      </div>`
+    : '';
 
   // Bot / Fake Review Analysis — only shown when reviews were actually analyzed
   let botAnalysisHTML = '';
@@ -840,20 +858,29 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
 
     botAnalysisHTML = `
       <div class="bot-analysis-block">
-        <div class="bot-analysis-header"><i class="fas fa-robot"></i> Comment Analysis ${sentimentHTML}<span class="analysis-count">${ca.reviews_analyzed} reviewed</span></div>
-        <div class="bot-analysis-rows">
-          <div class="analysis-row">
-            <span class="analysis-label">Bot Likelihood</span>
-            <span class="analysis-badge ${botClass}">${ca.bot_likelihood_pct}%</span>
+        <button class="bot-analysis-header section-toggle" aria-expanded="false">
+          <span><i class="fas fa-robot"></i> Comment Analysis</span>
+          <span class="section-toggle-meta">
+            ${sentimentHTML}
+            <span class="analysis-count">${ca.reviews_analyzed} reviewed</span>
+            <i class="fas fa-chevron-down section-toggle-icon"></i>
+          </span>
+        </button>
+        <div class="bot-analysis-collapsible section-collapsible" style="display:none;">
+          <div class="bot-analysis-rows">
+            <div class="analysis-row">
+              <span class="analysis-label">Bot Likelihood</span>
+              <span class="analysis-badge ${botClass}">${ca.bot_likelihood_pct}%</span>
+            </div>
+            <div class="analysis-row">
+              <span class="analysis-label">Fake Review Signals</span>
+              <span class="analysis-badge ${fakeClass}">${ca.fake_review_pct}%</span>
+            </div>
+            ${diversityHTML}
           </div>
-          <div class="analysis-row">
-            <span class="analysis-label">Fake Review Signals</span>
-            <span class="analysis-badge ${fakeClass}">${ca.fake_review_pct}%</span>
-          </div>
-          ${diversityHTML}
+          ${summaryHTML}
+          ${commentFlagsHTML}
         </div>
-        ${summaryHTML}
-        ${commentFlagsHTML}
       </div>
       ${coverageHTML}
       ${reviewThemesHTML}`;
@@ -973,29 +1000,24 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   const container = document.createElement('div');
   container.innerHTML = `
     <div class="result-card">
-      <div class="scan-status-badge">
-        <i class="fas fa-shield-alt"></i> PRODUCT SCANNED
-      </div>
-
       <div class="risk-badge risk-${safeRiskLevel.toLowerCase()}"></div>
 
       <div class="risk-level-text risk-${safeRiskLevel.toLowerCase()}">
-        PRODUCT RISK: ${safeRiskLevel.toUpperCase()}
+        ${safeRiskLevel.toUpperCase()} RISK
       </div>
 
       <div class="risk-score-text">
-        Risk Score: ${safeRiskScore} / 100
+        Score: ${safeRiskScore} / 100
       </div>
 
       ${confidenceHTML}
 
-      <div class="risk-message">
-        ${riskMessage}
+      <div class="risk-message-section">
+        <div class="risk-message-label"><i class="fas fa-clipboard-check"></i> Scan Summary</div>
+        <div class="risk-message">${riskMessage}</div>
       </div>
 
       ${scanSummarySection}
-
-      ${productNoticeHTML}
 
       ${botAnalysisHTML}
 
@@ -1137,6 +1159,16 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     }
     if (toggle) toggle.checked = true;
   }
+
+  // Wire up section collapsible toggles (Scan Summary, Bot Analysis)
+  container.querySelectorAll('.section-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const expanded = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', String(!expanded));
+      const body = btn.nextElementSibling;
+      if (body) body.style.display = expanded ? 'none' : 'block';
+    });
+  });
 }
 
 // Enhanced manual scan function - PRODUCTS ONLY
@@ -1150,7 +1182,7 @@ function performScan(isAutomatic = false, withReviews = false) {
     // Clear all previous results before starting a new scan
     output.innerHTML = '';
 
-    scanBtn.innerHTML = isAutomatic ? '<i class="fas fa-sync spinning"></i> Auto-scanning...' : '<i class="fas fa-sync spinning"></i> Normal scanning...';
+    scanBtn.innerHTML = isAutomatic ? '<i class="fas fa-sync spinning"></i> Auto-scanning...' : '<i class="fas fa-sync spinning"></i> Quick scanning...';
     if (withReviews) {
       commentsBtn.innerHTML = '<i class="fas fa-sync spinning"></i> Deep scanning...';
       commentsBtn.disabled = true;
@@ -1834,7 +1866,7 @@ function setCommentsButtonState(state) {
     commentOnlyBtn.style.opacity = '0.5';
     startCollectingPoll();
   } else if (state === "stopped") {
-    commentsBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Collection';
+    commentsBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Deep Scan';
     commentsBtn.style.background = '#1b9c85';
     commentsBtn.style.color = '#fff';
     commentsBtn.style.borderColor = '#1b9c85';
@@ -1875,7 +1907,7 @@ function setCommentOnlyButtonState(state) {
     commentsBtn.style.opacity = '0.5';
     startCollectingPoll();
   } else if (state === "stopped") {
-    commentOnlyBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Collection';
+    commentOnlyBtn.innerHTML = '<i class="fas fa-redo"></i> Restart Comments Scan';
     commentOnlyBtn.style.background = '#1b9c85';
     commentOnlyBtn.style.color = '#fff';
     commentOnlyBtn.style.borderColor = '#1b9c85';
@@ -2065,8 +2097,9 @@ function resetCommentOnlyButton() {
 }
 
 function resetButton() {
-  scanBtn.innerHTML = '<i class="fas fa-shield-alt"></i> Normal Scan';
+  scanBtn.innerHTML = '<i class="fas fa-shield-alt"></i> Quick Scan';
   scanBtn.disabled = false;
+
   // Only reset buttons if progressive collection hasn't started
   if (progressiveState === "idle") {
     resetCommentsButton();

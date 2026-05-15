@@ -85,7 +85,7 @@
     "matches": [
       "https://*.shopee.ph/*",
       "https://*.lazada.com.ph/*",
-      "https://www.facebook.com/*"
+      "https://*.facebook.com/*"
     ]
   }]
 }

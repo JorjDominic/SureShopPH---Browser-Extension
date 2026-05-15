@@ -1,6 +1,103 @@
 /* SureShop popup_extras.css — styles for the slide-in drawer + pills.
    Scoped under #ssDrawer / .ss-* to avoid colliding with popup.css. */
 
+/* ================================================================
+   SECTION COLLAPSIBLES (Scan Summary, Bot Analysis)
+   ================================================================ */
+
+/* Body panel hidden by default — shown via JS when toggled */
+.section-collapsible { display: none; }
+
+/* Reset <button> to look identical to the original <div> header */
+.section-toggle {
+  width: 100%;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  /* background, padding, color, font-size come from the specific header class */
+}
+.section-toggle:focus-visible {
+  outline: 2px solid var(--color-primary, #1b9c85);
+  outline-offset: -2px;
+}
+
+/* Right-side meta: count badge + chevron */
+.section-toggle-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.section-toggle-icon {
+  font-size: 9px;
+  opacity: 0.55;
+  transition: transform 0.2s ease;
+}
+.section-toggle[aria-expanded="true"] .section-toggle-icon {
+  transform: rotate(180deg);
+}
+
+/* Flag count badge inside Scan Summary header */
+.section-flag-count {
+  font-size: 9px;
+  font-weight: 600;
+  color: #c97a00;
+  background: rgba(201, 122, 0, 0.1);
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Collapsible body for bot analysis */
+#output .bot-analysis-collapsible {
+  padding: 6px 10px 8px !important;
+}
+
+/* Footer website link */
+.footer { display: flex !important; align-items: center !important; justify-content: space-between !important; }
+.footer-website-link {
+  font-size: 9px;
+  color: var(--color-primary);
+  text-decoration: none;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.footer-website-link:hover { opacity: 1; text-decoration: underline; }
+.footer-website-link i { font-size: 7px; }
+
+/* ================================================================
+   SCAN SUMMARY LABEL (above risk message text)
+   ================================================================ */
+#output .risk-message-section {
+  grid-column: 1 / -1 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 3px !important;
+  margin-top: 2px !important;
+  padding-top: 5px !important;
+  border-top: 1px solid rgba(132,139,200,0.12) !important;
+}
+#output .risk-message-label {
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  color: var(--color-primary-dark) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+#output .risk-message-label i { color: var(--color-primary) !important; }
+#output .risk-message-section .risk-message {
+  padding: 0 !important;
+  margin-top: 0 !important;
+  border-top: none !important;
+}
+
 /* ---------------------------------------------------------------
    Live collecting-progress card — shown in the side panel output
    area while Deep Scan / Comment-Only scan is actively running.
@@ -144,10 +241,9 @@
 }
 
 /* — Full-width children — */
-#output .risk-message,
+#output .risk-message-section,
 #output .confidence-block,
 #output .scan-summary-section,
-#output .product-notice-block,
 #output .bot-analysis-block,
 #output .coverage-callout,
 #output .review-themes-block,
@@ -194,15 +290,17 @@
 #output .confidence-missing  { font-size: 10px !important; line-height: 1.4 !important; }
 
 /* ================================================================
-   SCAN SUMMARY
+   SCAN SUMMARY / RISK ANALYSIS  
    ================================================================ */
 #output .scan-summary-section {
   border-radius: 8px !important;
   margin-top: 5px !important;
   overflow: hidden !important;
 }
-#output .scan-summary-header {
-  padding: 5px 10px !important;
+/* Shared header style for both collapsible sections */
+#output .scan-summary-header,
+#output .bot-analysis-header {
+  padding: 7px 10px !important;
   font-size: 9.5px !important;
   font-weight: 700 !important;
   letter-spacing: 0.4px !important;
@@ -235,19 +333,37 @@
    BOT / COMMENT ANALYSIS
    ================================================================ */
 #output .bot-analysis-block {
-  padding: 7px 10px !important;
+  padding: 0 !important;
   border-radius: 8px !important;
   margin-top: 5px !important;
+  overflow: hidden !important;
 }
 #output .bot-analysis-header {
-  font-size: 9.5px !important;
-  font-weight: 700 !important;
-  margin-bottom: 4px !important;
+  margin-bottom: 0 !important;
   display: flex !important;
   align-items: center !important;
   gap: 5px !important;
 }
-#output .analysis-count  { font-size: 9px !important; font-weight: 600 !important; }
+/* Sentiment badge inside section header — match pill size of section-flag-count */
+#output .section-toggle-meta .sentiment-badge {
+  padding: 1px 6px !important;
+  border-radius: 8px !important;
+  font-size: 9px !important;
+  letter-spacing: 0 !important;
+  border: none !important;
+}
+
+/* Review count pill — matches section-flag-count shape, neutral colour */
+#output .analysis-count {
+  font-size: 9px !important;
+  font-weight: 600 !important;
+  background: rgba(125,141,161,0.14) !important;
+  color: var(--color-info-dark) !important;
+  padding: 1px 6px !important;
+  border-radius: 8px !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
 #output .analysis-row    { padding: 3px 0 !important; display: flex !important; align-items: center !important; justify-content: space-between !important; }
 #output .analysis-label  { font-size: 10.5px !important; }
 #output .analysis-badge  { font-size: 9.5px !important; padding: 1px 8px !important; border-radius: 8px !important; font-weight: 700 !important; }

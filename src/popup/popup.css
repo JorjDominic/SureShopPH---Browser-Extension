@@ -366,7 +366,7 @@ html, body {
     overflow-wrap: break-word;
 }
 #output:empty::before {
-    content: "Click Normal Scan to analyze the current page...";
+    content: "Click Quick Scan to analyze the current page...";
     color: var(--color-info-dark);
     font-style: italic;
     position: absolute;
