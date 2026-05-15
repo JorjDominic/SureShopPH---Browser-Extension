@@ -283,6 +283,11 @@ function initWebsiteLink() {
     e.preventDefault();
     chrome.tabs.create({ url: 'https://www.sureshopph.site' });
   });
+  const versionEl = document.getElementById('extVersion');
+  if (versionEl) {
+    const { version } = chrome.runtime.getManifest();
+    versionEl.textContent = `v${version}`;
+  }
 }
 
 if (document.readyState === "loading") {
@@ -800,8 +805,9 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       : sentimentVal === 'suspicious' ? 'sentiment-suspicious'
       : sentimentVal === 'mixed' ? 'sentiment-mixed'
       : null;
+    const sentimentLabel = { positive: 'Positive', suspicious: 'Caution', mixed: 'Mixed' }[sentimentVal] || sentimentVal;
     const sentimentHTML = sentimentVal && sentimentClass
-      ? `<span class="sentiment-badge ${sentimentClass}">${sentimentVal}</span>`
+      ? `<span class="sentiment-badge ${sentimentClass}">${sentimentLabel}</span>`
       : '';
 
     // Review diversity score row
@@ -817,7 +823,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     // Comment summary paragraph: always use backend-provided summary.
     // Keep comment_summary object for diagnostics only.
     const _commentSummaryDiagnostics = caRaw.comment_summary || null;
-    console.debug("[Popup] summary_source:", caRaw.summary_source, "summary:", caRaw.summary);
+    dbg("[Popup] summary_source:", caRaw.summary_source, "summary:", caRaw.summary);
     const backendSummary = typeof caRaw.summary === 'string' ? caRaw.summary.trim() : '';
     const visibleSummary = backendSummary || 'Groq summary unavailable for this scan.';
     const summaryHTML = `<div class="bot-analysis-summary">${String(visibleSummary).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
@@ -1106,17 +1112,19 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
               body: JSON.stringify(payload)
             });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            reportFeedback.textContent = 'Thank you! Your report has been submitted.';
+            reportFeedback.className = 'report-feedback report-feedback--success';
+            reportSubmitBtn.disabled = true;
+            reportSubmitBtn.innerHTML = '<i class="fas fa-check"></i> Reported';
+            reportListingBtn.disabled = true;
+            reportListingBtn.innerHTML = '<i class="fas fa-flag"></i> Reported';
+            reportListingBtn.classList.add('report-btn--done');
           } catch (_) {
-            // Server unreachable — still thank the user; report stored client-side
+            reportFeedback.textContent = 'Unable to submit report. Please try again.';
+            reportFeedback.className = 'report-feedback report-feedback--error';
+            reportSubmitBtn.disabled = false;
+            reportSubmitBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Submit';
           }
-
-          reportFeedback.textContent = 'Thank you! Your report has been submitted.';
-          reportFeedback.className = 'report-feedback report-feedback--success';
-          reportSubmitBtn.disabled = true;
-          reportSubmitBtn.innerHTML = '<i class="fas fa-check"></i> Reported';
-          reportListingBtn.disabled = true;
-          reportListingBtn.innerHTML = '<i class="fas fa-flag"></i> Reported';
-          reportListingBtn.classList.add('report-btn--done');
         });
       } catch (_) {
         reportFeedback.textContent = 'Something went wrong. Please try again.';
@@ -1450,54 +1458,6 @@ function performScan(isAutomatic = false, withReviews = false) {
       }
     });
   });
-}
-
-// -----------------------------------------------------------------------
-// Re-scan with collected reviews to update risk score and activate
-// comment analysis (bot likelihood, fake review signals).
-// Deduplicated: only re-submits when review count increases.
-// -----------------------------------------------------------------------
-let lastRescanReviewCount = { lazada: 0, facebook: 0 };
-
-async function rescanWithReviews(productData, reviews, platformKey) {
-  if (!productData || !reviews.length) return;
-  if (reviews.length <= (lastRescanReviewCount[platformKey] || 0)) return;
-  lastRescanReviewCount[platformKey] = reviews.length;
-
-  const { accessToken } = await chrome.storage.local.get('accessToken');
-  if (!accessToken) return;
-
-  try {
-    const payload = {
-      listing: productData,
-      comments: {
-        platform: productData.platform || platformKey,
-        comments: (reviews || []).map(r => ({
-          text: r.text || r.comment || '',
-          date: r.date || null,
-          rating_stars: r.rating_stars ?? r.rating ?? null
-        })),
-        page_number: 1,
-        total_pages: 1
-      }
-    };
-    const resp = await fetch(`${SURESHOP_API_BASE}/analyze/deep`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-      body: JSON.stringify(payload)
-    });
-    if (!resp.ok) return;
-    const result = await resp.json();
-    const riskScore = result.combined_risk_score ?? result.risk_score;
-    const riskLevel = result.combined_risk_level ?? result.risk_level;
-    if (riskScore !== undefined && riskLevel !== undefined) {
-      const cachedData = platformKey === 'lazada' ? lastLazadaProductData : lastFacebookProductData;
-      // Merge listing result (product_notice, confidence, flags) under the deep scan result
-      // so those fields are not lost when showRiskAssessment re-renders.
-      const mergedResult = { ...(lastDeepScanInitialResult?.result || {}), ...result };
-      showRiskAssessment(riskScore, riskLevel, cachedData?.description || null, cachedData, mergedResult);
-    }
-  } catch (_) {}
 }
 
 // -----------------------------------------------------------------------

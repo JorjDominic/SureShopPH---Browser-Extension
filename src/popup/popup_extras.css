@@ -58,6 +58,13 @@
 
 /* Footer website link */
 .footer { display: flex !important; align-items: center !important; justify-content: space-between !important; }
+.footer-version {
+  font-size: 9px;
+  color: var(--color-info-dark);
+  opacity: 0.5;
+  margin-left: auto;
+  padding-right: 8px;
+}
 .footer-website-link {
   font-size: 9px;
   color: var(--color-primary);

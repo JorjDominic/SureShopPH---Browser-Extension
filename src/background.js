@@ -98,9 +98,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   
   if (message.type === "OPEN_POPUP") {
-    debugLog("🔓", "Open popup message received");
-    chrome.action.openPopup();
-    sendResponse({ received: true, action: "popup_opened" });
+    debugLog("🔓", "Open side panel (via OPEN_POPUP) message received");
+    if (sender.tab?.id) {
+      chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => {});
+    }
+    sendResponse({ received: true, action: "side_panel_opened" });
   }
 
   if (message.type === "OPEN_SIDE_PANEL") {
