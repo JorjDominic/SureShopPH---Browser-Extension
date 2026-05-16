@@ -886,10 +886,10 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
           </div>
           ${summaryHTML}
           ${commentFlagsHTML}
+          ${reviewThemesHTML}
         </div>
       </div>
-      ${coverageHTML}
-      ${reviewThemesHTML}`;
+      ${coverageHTML}`;
   }
 
   let dataRowsHTML = '';
