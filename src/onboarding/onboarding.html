@@ -8,48 +8,108 @@
   <link rel="stylesheet" href="onboarding.css" />
 </head>
 <body>
+
+  <!-- ── Branded header ── -->
+  <header class="ob-header">
+    <div class="ob-header-inner">
+      <div class="ob-logo"><i class="fas fa-shield-alt"></i><span>SureShop</span></div>
+      <p class="ob-tagline">Your Filipino online shopping guard</p>
+    </div>
+  </header>
+
   <main class="ob-shell">
-    <header class="ob-header">
-      <div class="ob-logo"><i class="fas fa-shield-alt"></i> SureShop</div>
-      <div class="ob-tagline">Stay safe while shopping online</div>
-    </header>
 
-    <section class="ob-card">
-      <div class="ob-step" data-step="1">
-        <div class="ob-step-num">1</div>
-        <h2><i class="fas fa-store"></i> We scan supported sites</h2>
-        <p>SureShop checks <strong>Shopee</strong>, <strong>Lazada</strong>, and <strong>FB Marketplace</strong> product pages for risk signals. URLs of other shopping sites we support are checked automatically.</p>
+    <!-- ── How it works ── -->
+    <p class="ob-section-label">How it works</p>
+    <div class="ob-steps">
+
+      <div class="ob-step">
+        <div class="ob-step-aside">
+          <div class="ob-step-icon"><i class="fas fa-store"></i></div>
+          <div class="ob-step-connector"></div>
+        </div>
+        <div class="ob-step-body">
+          <div class="ob-step-head">
+            <span class="ob-step-num">1</span>
+            <h3>Supported sites</h3>
+          </div>
+          <p>SureShop checks <strong>Shopee</strong>, <strong>Lazada</strong>, and <strong>FB Marketplace</strong> product pages for risk signals. URLs from other supported shopping sites are checked automatically.</p>
+          <div class="ob-platform-pills">
+            <span class="ob-pill ob-pill--teal"><i class="fas fa-shield-alt"></i> Shopee</span>
+            <span class="ob-pill ob-pill--teal"><i class="fas fa-shield-alt"></i> Lazada</span>
+            <span class="ob-pill ob-pill--teal"><i class="fas fa-shield-alt"></i> FB Marketplace</span>
+          </div>
+        </div>
       </div>
 
-      <div class="ob-step" data-step="2">
-        <div class="ob-step-num">2</div>
-        <h2><i class="fas fa-mouse-pointer"></i> Click the icon, run a scan</h2>
-        <p>Open the SureShop side panel and press <strong>Quick Scan</strong>, <strong>Deep Scan</strong>, or <strong>Scan Comments</strong>. We never run a scan without your action.</p>
-        <p class="ob-tip"><i class="fas fa-keyboard"></i> Tip: press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> to open SureShop on any page.</p>
+      <div class="ob-step">
+        <div class="ob-step-aside">
+          <div class="ob-step-icon"><i class="fas fa-mouse-pointer"></i></div>
+          <div class="ob-step-connector"></div>
+        </div>
+        <div class="ob-step-body">
+          <div class="ob-step-head">
+            <span class="ob-step-num">2</span>
+            <h3>Run a scan</h3>
+          </div>
+          <p>Open the SureShop side panel and press <strong>Quick Scan</strong>, <strong>Deep Scan</strong>, or <strong>Scan Comments</strong>. We never scan without your action.</p>
+          <div class="ob-tip"><i class="fas fa-keyboard"></i> Press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> to open SureShop instantly on any page.</div>
+        </div>
       </div>
 
-      <div class="ob-step" data-step="3">
-        <div class="ob-step-num">3</div>
-        <h2><i class="fas fa-lock"></i> Your privacy</h2>
-        <p>We send the visible product details (name, price, ratings, public reviews, seller info) to the SureShop service for analysis. <strong>We never send</strong> your account, login state, payment details, or browsing history.</p>
-        <p>You can clear all stored history and feedback any time in <strong>Settings</strong>.</p>
+      <div class="ob-step ob-step--last">
+        <div class="ob-step-aside">
+          <div class="ob-step-icon"><i class="fas fa-lock"></i></div>
+        </div>
+        <div class="ob-step-body">
+          <div class="ob-step-head">
+            <span class="ob-step-num">3</span>
+            <h3>Your privacy</h3>
+          </div>
+          <p>We only send visible product details — name, price, ratings, public reviews, seller info — for analysis. <strong>We never send</strong> your account info, login state, or payment details.</p>
+        </div>
       </div>
-    </section>
 
-    <section class="ob-card ob-card--info">
-      <h3><i class="fas fa-flask"></i> How the risk score works</h3>
-      <p>Each scan combines several signals — seller age, response rate, rating distribution, review patterns, price anomalies, and language signals in comments — into a single 0–100 score. Lower is safer.</p>
-      <ul>
-        <li><span class="dot dot-low"></span> <strong>0–39 Low risk</strong> — looks normal, common patterns</li>
-        <li><span class="dot dot-med"></span> <strong>40–69 Medium risk</strong> — some warning signs, review carefully</li>
-        <li><span class="dot dot-high"></span> <strong>70–100 High risk</strong> — strong scam indicators, avoid if possible</li>
-      </ul>
-      <p class="ob-disclaimer">SureShop is an assistant, not a guarantee. Use your own judgment before purchasing.</p>
-    </section>
+    </div><!-- /.ob-steps -->
 
-    <footer class="ob-actions">
-      <button id="obDoneBtn" class="ob-primary"><i class="fas fa-check"></i> I'm ready</button>
+    <!-- ── Risk score ── -->
+    <div class="ob-card ob-risk-card">
+      <h2 class="ob-card-title"><i class="fas fa-chart-bar"></i> How the risk score works</h2>
+      <p class="ob-card-desc">Each scan combines seller age, response rate, rating patterns, review signals, and price anomalies into a single <strong>0–100 score</strong>. Lower is safer.</p>
+
+      <div class="ob-risk-levels">
+        <div class="ob-risk-level ob-risk--low">
+          <div class="ob-risk-bar-wrap"><div class="ob-risk-bar"></div></div>
+          <div class="ob-risk-content">
+            <span class="ob-risk-badge">Low Risk &nbsp;0–39</span>
+            <p>Looks normal, common patterns</p>
+          </div>
+        </div>
+        <div class="ob-risk-level ob-risk--medium">
+          <div class="ob-risk-bar-wrap"><div class="ob-risk-bar"></div></div>
+          <div class="ob-risk-content">
+            <span class="ob-risk-badge">Medium Risk &nbsp;40–69</span>
+            <p>Some warning signs, review carefully</p>
+          </div>
+        </div>
+        <div class="ob-risk-level ob-risk--high">
+          <div class="ob-risk-bar-wrap"><div class="ob-risk-bar"></div></div>
+          <div class="ob-risk-content">
+            <span class="ob-risk-badge">High Risk &nbsp;70–100</span>
+            <p>Strong scam indicators, avoid if possible</p>
+          </div>
+        </div>
+      </div>
+
+      <p class="ob-disclaimer"><i class="fas fa-info-circle"></i> SureShop is an assistant, not a guarantee. Always use your own judgment before purchasing.</p>
+    </div>
+
+    <!-- ── CTA ── -->
+    <footer class="ob-footer">
+      <button id="obDoneBtn" class="ob-primary"><i class="fas fa-shield-alt"></i> Start Shopping Safely</button>
+      <p class="ob-footer-note">You can revisit this guide anytime from Settings.</p>
     </footer>
+
   </main>
 
   <script src="../shared/storage.js"></script>

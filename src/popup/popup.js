@@ -66,6 +66,20 @@ function showToast(message, type = "info", durationMs = 3500) {
 const output = document.getElementById("output");
 const scanBtn = document.getElementById("scanBtn");
 const commentOnlyBtn = document.getElementById("commentOnlyBtn");
+const clearResultsBtn = document.getElementById("clearResultsBtn");
+const clearResultsRow = document.getElementById("clearResultsRow");
+
+// Show/hide the Clear Results button whenever #output content changes
+new MutationObserver(() => {
+  const hasContent = output.innerHTML.trim() !== '';
+  if (clearResultsRow) clearResultsRow.style.display = hasContent ? '' : 'none';
+}).observe(output, { childList: true, subtree: true, characterData: true });
+if (clearResultsBtn) {
+  clearResultsBtn.addEventListener('click', () => {
+    output.innerHTML = '';
+    if (clearResultsRow) clearResultsRow.style.display = 'none';
+  });
+}
 const activationSection = document.getElementById("activationSection");
 const scanSection = document.getElementById("scanSection");
 const activateBtn = document.getElementById("activateBtn");

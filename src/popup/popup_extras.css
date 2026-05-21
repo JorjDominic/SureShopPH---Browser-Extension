@@ -1,4 +1,4 @@
-/* SureShop popup_extras.css — styles for the slide-in drawer + pills.
+﻿/* SureShop popup_extras.css — styles for the slide-in drawer + pills.
    Scoped under #ssDrawer / .ss-* to avoid colliding with popup.css. */
 
 /* ================================================================
@@ -18,7 +18,7 @@
   /* background, padding, color, font-size come from the specific header class */
 }
 .section-toggle:focus-visible {
-  outline: 2px solid var(--color-primary, #1b9c85);
+  outline: 2px solid var(--color-primary, #0ea5a4);
   outline-offset: -2px;
 }
 
@@ -120,19 +120,19 @@
 }
 .collecting-panel .collecting-icon {
   font-size: 30px;
-  color: #1b9c85;
+  color: #0ea5a4;
 }
 .collecting-panel .collecting-label {
   font-size: 11px;
   font-weight: 700;
-  color: #677483;
+  color: #475569;
   text-transform: uppercase;
   letter-spacing: 0.6px;
 }
 .collecting-panel .collecting-count {
   font-size: 26px;
   font-weight: 800;
-  color: #1b9c85;
+  color: #0ea5a4;
   line-height: 1.1;
 }
 .collecting-score-row {
@@ -147,9 +147,9 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.collecting-score-low    { background: rgba(27,156,133,0.12); color: #138a73; border: 1px solid rgba(27,156,133,0.3); }
-.collecting-score-medium { background: rgba(230,126,34,0.12);  color: #d35400; border: 1px solid rgba(230,126,34,0.3); }
-.collecting-score-high   { background: rgba(231,76,60,0.12);   color: #c0392b; border: 1px solid rgba(231,76,60,0.3); }
+.collecting-score-low    { background: rgba(34,197,94,0.12); color: #0f766e; border: 1px solid rgba(34,197,94,0.3); }
+.collecting-score-medium { background: rgba(249,115,22,0.12);  color: #d35400; border: 1px solid rgba(249,115,22,0.3); }
+.collecting-score-high   { background: rgba(239,68,68,0.12);   color: #c0392b; border: 1px solid rgba(239,68,68,0.3); }
 
 /* ---------------------------------------------------------------
    Result UI — compact side-panel layout.
@@ -179,9 +179,9 @@
   padding: 10px 12px 8px !important;
   text-align: left !important;
   border-radius: 12px !important;
-  box-shadow: 0 1px 8px rgba(27,156,133,0.10) !important;
+  box-shadow: 0 1px 8px rgba(42,157,143,0.10) !important;
   background: #fff !important;
-  border: 1px solid rgba(27,156,133,0.12) !important;
+  border: 1px solid rgba(34,197,94,0.12) !important;
 }
 
 /* — Status badge: spans both columns — */
@@ -218,9 +218,9 @@
   line-height: 1;
   display: block;
 }
-#output .risk-badge.risk-low::after    { content: "\f058"; color: #1b9c85; }
-#output .risk-badge.risk-medium::after { content: "\f071"; color: #c47d00; }
-#output .risk-badge.risk-high::after   { content: "\f06a"; color: #ff0060; }
+#output .risk-badge.risk-low::after    { content: "\f058"; color: #22c55e; }
+#output .risk-badge.risk-medium::after { content: "\f071"; color: #854d0e; }
+#output .risk-badge.risk-high::after   { content: "\f06a"; color: #dc2626; }
 
 /* — Risk level: right col row 2 — */
 #output .risk-level-text {
@@ -455,13 +455,13 @@
   position: fixed; top: 10px; right: 10px; z-index: 9999;
   width: 34px; height: 34px; border-radius: 50%;
   border: none; cursor: pointer;
-  background: rgba(27, 156, 133, 0.14); color: #1b9c85;
+  background: rgba(14, 165, 164, 0.14); color: #0ea5a4;
   font-size: 14px; line-height: 1;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.15s ease;
 }
-.ss-extras-btn:hover { background: rgba(27, 156, 133, 0.28); }
-.ss-extras-btn:focus-visible { outline: 2px solid #1b9c85; outline-offset: 2px; }
+.ss-extras-btn:hover { background: rgba(14, 165, 164, 0.28); }
+.ss-extras-btn:focus-visible { outline: 2px solid #0ea5a4; outline-offset: 2px; }
 
 /* Drawer container */
 .ss-drawer {
@@ -491,7 +491,7 @@
 .ss-drawer-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 14px;
-  background: linear-gradient(135deg, #1b9c85 0%, #138a73 100%);
+  background: linear-gradient(135deg, #0ea5a4 0%, #0f766e 100%);
   color: #fff;
 }
 .ss-drawer-head strong { font-size: 14px; font-weight: 700; }
@@ -509,15 +509,15 @@
 }
 .ss-drawer-tabs button {
   flex: 1; border: none; background: transparent; cursor: pointer;
-  padding: 10px 8px; font-size: 12px; font-weight: 500; color: #677483;
+  padding: 10px 8px; font-size: 12px; font-weight: 500; color: #475569;
   font-family: inherit;
   border-bottom: 2px solid transparent;
   transition: color 0.15s, border-color 0.15s;
 }
 .ss-drawer-tabs button i { margin-right: 4px; }
-.ss-drawer-tabs button:hover { color: #1b9c85; }
+.ss-drawer-tabs button:hover { color: #0ea5a4; }
 .ss-drawer-tabs button.is-active {
-  color: #1b9c85; border-bottom-color: #1b9c85;
+  color: #0ea5a4; border-bottom-color: #0ea5a4;
 }
 
 /* Body / panes */
@@ -529,7 +529,7 @@
 
 /* Empty state */
 .ss-empty {
-  text-align: center; padding: 32px 12px; color: #677483;
+  text-align: center; padding: 32px 12px; color: #475569;
 }
 .ss-empty i { font-size: 28px; margin-bottom: 8px; opacity: 0.6; }
 .ss-empty p { margin: 0; font-size: 13px; line-height: 1.5; }
@@ -537,7 +537,7 @@
 /* History pane */
 .ss-pane-toolbar {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 12px; color: #677483; margin-bottom: 10px;
+  font-size: 12px; color: #475569; margin-bottom: 10px;
 }
 .ss-history-list { list-style: none; padding: 0; margin: 0; }
 .ss-history-card {
@@ -546,12 +546,12 @@
   border-radius: 8px; padding: 10px; margin-bottom: 8px;
   background: #f8fafc;
 }
-.ss-history-card.ss-risk-low    { border-left-color: #1b9c85; }
-.ss-history-card.ss-risk-medium { border-left-color: #e67e22; }
-.ss-history-card.ss-risk-high   { border-left-color: #e74c3c; }
+.ss-history-card.ss-risk-low    { border-left-color: #22c55e; }
+.ss-history-card.ss-risk-medium { border-left-color: #f97316; }
+.ss-history-card.ss-risk-high   { border-left-color: #ef4444; }
 .ss-history-row1, .ss-history-row2 {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 11px; color: #677483;
+  font-size: 11px; color: #475569;
 }
 .ss-history-row2 { margin-top: 6px; }
 .ss-history-name {
@@ -559,7 +559,7 @@
   margin: 4px 0 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ss-history-seller { font-size: 11px; color: #677483; }
+.ss-history-seller { font-size: 11px; color: #475569; }
 .ss-history-actions { display: flex; gap: 6px; }
 
 /* Pills */
@@ -567,9 +567,9 @@
   display: inline-block; padding: 2px 8px; border-radius: 999px;
   font-size: 10px; font-weight: 700; text-transform: uppercase;
 }
-.ss-pill-low    { background: rgba(27, 156, 133, 0.15); color: #1b9c85; }
-.ss-pill-medium { background: rgba(230, 126, 34, 0.15); color: #e67e22; }
-.ss-pill-high   { background: rgba(231, 76, 60, 0.15);  color: #e74c3c; }
+.ss-pill-low    { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+.ss-pill-medium { background: rgba(249, 115, 22, 0.15); color: #f97316; }
+.ss-pill-high   { background: rgba(239, 68, 68, 0.15);  color: #ef4444; }
 
 /* Settings */
 .ss-settings-group {
@@ -581,7 +581,7 @@
 .ss-settings-group h4 {
   margin: 0 0 8px; font-size: 12px;
   text-transform: uppercase; letter-spacing: 0.5px;
-  color: #1b9c85;
+  color: #0ea5a4;
 }
 .ss-settings-group label {
   display: flex; align-items: center; justify-content: space-between;
@@ -601,18 +601,18 @@
   background: transparent; border: 1px solid rgba(132, 139, 200, 0.3);
   border-radius: 6px;
   padding: 4px 10px; font-size: 11px; font-weight: 600;
-  color: #1b9c85; cursor: pointer; font-family: inherit;
+  color: #0ea5a4; cursor: pointer; font-family: inherit;
   display: inline-flex; align-items: center; gap: 4px;
 }
-.ss-link-btn:hover { background: rgba(27, 156, 133, 0.08); }
-.ss-link-btn.ss-danger { color: #e74c3c; border-color: rgba(231, 76, 60, 0.3); }
-.ss-link-btn.ss-danger:hover { background: rgba(231, 76, 60, 0.08); }
+.ss-link-btn:hover { background: rgba(14, 165, 164, 0.08); }
+.ss-link-btn.ss-danger { color: #ef4444; border-color: rgba(239, 68, 68, 0.3); }
+.ss-link-btn.ss-danger:hover { background: rgba(239, 68, 68, 0.08); }
 
 /* About */
 .ss-about p { font-size: 13px; line-height: 1.5; margin: 6px 0; color: #2a2f3a; }
-.ss-about h4 { font-size: 12px; text-transform: uppercase; color: #1b9c85; margin: 14px 0 6px; }
+.ss-about h4 { font-size: 12px; text-transform: uppercase; color: #0ea5a4; margin: 14px 0 6px; }
 .ss-risk-legend { list-style: none; padding: 0; margin: 0; }
-.ss-risk-legend li { font-size: 12px; padding: 4px 0; color: #677483; }
+.ss-risk-legend li { font-size: 12px; padding: 4px 0; color: #475569; }
 .ss-risk-legend li .ss-pill { margin-right: 6px; }
 .ss-feedback-row {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0;
@@ -626,7 +626,7 @@
 
 /* Dark mode (driven by [data-ss-theme="dark"] on <html>) */
 html[data-ss-theme="dark"] .ss-extras-btn {
-  background: rgba(27, 156, 133, 0.25); color: #5fd8bf;
+  background: rgba(14, 165, 164, 0.25); color: #5fd8bf;
 }
 html[data-ss-theme="dark"] .ss-drawer-panel {
   background: #181f22; color: #e9eef0;
