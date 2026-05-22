@@ -4,7 +4,7 @@
   "name": "SureShopPH - Online Shopping Risk Detection and Analysis",
   "short_name": "SureShopPH",
   "description": "Helps Filipino online shoppers identify potential risks in Shopee, Lazada, and Facebook Marketplace listings.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "minimum_chrome_version": "114",
   "homepage_url": "https://www.sureshopph.site",
   "permissions": [
@@ -29,7 +29,7 @@
     "https://*.shopee.ph/*",
     "https://*.lazada.com.ph/*",
     "https://*.facebook.com/marketplace/*",
-    "http://localhost:8000/*"
+    "https://sureshopph-backend-layer-production.up.railway.app/*"
   ],
   "icons": {
     "16": "icons/icon16.png",
