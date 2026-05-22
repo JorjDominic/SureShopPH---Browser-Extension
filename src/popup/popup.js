@@ -221,6 +221,24 @@ function runStopFallback(platform) {
         lastShopeeReviews = reviews;
       }
       dbg("[Popup] Stop fallback triggered:", platform, "reviews=", reviews.length);
+      if (reviews.length === 0 && !productData) {
+        // Comment-only scan with 0 reviews — sending empty array to /analyze/comments
+        // would return misleading 0% scores; show a message instead.
+        const _pl = output.querySelector('.collecting-panel');
+        if (_pl) {
+          const _ic = _pl.querySelector('.collecting-icon i');
+          const _lb = _pl.querySelector('.collecting-label');
+          const _ct = _pl.querySelector('.collecting-count');
+          if (_ic) _ic.className = 'fas fa-info-circle';
+          if (_lb) _lb.textContent = 'No reviews were collected.';
+          if (_ct) _ct.textContent = isLazada
+            ? 'Scroll down to Ratings & Reviews and try again.'
+            : 'Scroll down to the reviews section and try again.';
+        }
+        return;
+      }
+      // Deep scan with 0 reviews: productData is available so this routes to /analyze/deep,
+      // which returns a valid combined_risk_score (listing score × 70% + 0 comment contribution).
       analyzeCommentsFromPopup(reviews, productData, baseSr, isLazada ? 'lazada' : 'shopee');
     });
   });
@@ -716,25 +734,38 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
 
   // Prefer backend confidence (handles Facebook 3-field recalibration correctly).
   // Fall back to client-side computation when no backend result is available.
+  // NOTE: /analyze/comments returns confidence as a plain string ("High"/"Moderate"/"Low");
+  //       /analyze/listing and /analyze/deep return it as an object with .level, .percentage, etc.
   const rawConf = scanResult?.confidence;
   const conf = rawConf
-    ? {
-        confidenceLevel:      rawConf.level,
-        confidencePercentage: rawConf.percentage,
-        fieldsPresent:        rawConf.fields_present,
-        fieldsMissing:        (rawConf.missing_fields || []).map(k => ({
-          price: 'Price', shop_age: 'Seller join date', rating: 'Aggregate rating',
-          rating_count: 'Rating count', description: 'Product description',
-          response_rate: 'Response rate',
-        })[k] || k),
-        total: rawConf.total_fields,
-      }
+    ? typeof rawConf === 'string'
+      ? {
+          confidenceLevel:      rawConf,
+          confidencePercentage: rawConf === 'High' ? 100 : rawConf === 'Moderate' ? 60 : 33,
+          fieldsPresent:        null,
+          fieldsMissing:        [],
+          total:                null,
+        }
+      : {
+          confidenceLevel:      rawConf.level,
+          confidencePercentage: rawConf.percentage,
+          fieldsPresent:        rawConf.fields_present,
+          fieldsMissing:        (rawConf.missing_fields || []).map(k => ({
+            price: 'Price', shop_age: 'Seller join date', rating: 'Aggregate rating',
+            rating_count: 'Rating count', description: 'Product description',
+            response_rate: 'Response rate',
+          })[k] || k),
+          total: rawConf.total_fields,
+        }
     : computeConfidence(productData);
   let confidenceHTML = '';
-  if (conf) {
+  if (conf && conf.confidenceLevel) {
     const lvlClass = `confidence-${conf.confidenceLevel.toLowerCase()}`;
     const missingNote = conf.fieldsMissing.length > 0
       ? `<div class="confidence-missing">${conf.fieldsMissing.join(', ')} could not be retrieved.</div>`
+      : '';
+    const detailLine = conf.fieldsPresent != null
+      ? `<div class="confidence-detail">${conf.fieldsPresent} of ${conf.total} data points retrieved</div>`
       : '';
     confidenceHTML = `
       <div class="confidence-block ${lvlClass}">
@@ -747,7 +778,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
             </span>
           </span>
         </div>
-        <div class="confidence-detail">${conf.fieldsPresent} of ${conf.total} data points retrieved</div>
+        ${detailLine}
         <div class="confidence-bar-wrap">
           <div class="confidence-bar ${lvlClass}" style="width:${conf.confidencePercentage}%"></div>
         </div>
@@ -791,7 +822,17 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   // section built below — scanSummarySection is kept as empty for backward compat.
   const scanSummarySection = '';
 
-  // Bot / Fake Review Analysis — only shown when reviews were actually analyzed
+  // Scan type — computed early so both botAnalysisHTML and the card template can use these.
+  // Deep scan:     combined_risk_score + signals.weights (weighted listing + review blend).
+  // Comments scan: scanResult.comments present, no combined_risk_score.
+  // Normal scan:   listing only — no comments, no combined_risk_score.
+  const signals = scanResult?.signals ?? null;
+  const isDeepScan      = !!(signals?.weights && scanResult?.combined_risk_score != null);
+  const isCommentsScan  = !isDeepScan && !!(scanResult?.comments);
+  const isFacebookScan  = !isDeepScan && !isCommentsScan &&
+    ((productData?.platform || scanResult?.platform || '').toLowerCase() === 'facebook');
+
+  // Bot / Fake Review Analysis — unified single toggle (listing flags + comment analysis)
   let botAnalysisHTML = '';
   // Use the whole comments/comment_analysis object so no field names are accidentally dropped.
   const caRaw = scanResult?.comment_analysis ?? scanResult?.comments ?? null;
@@ -802,17 +843,24 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     fake_review_pct: caRaw.fake_review_pct ?? caRaw.fake_score ?? 0,
     flags: caRaw.flags || [],
   } : null;
-  // Show block when analysis exists or backend summary is present.
   const hasBackendSummary = !!(caRaw && typeof caRaw.summary === 'string' && caRaw.summary.trim());
-  if (ca && (ca.reviews_analyzed > 0 || ca.bot_likelihood_pct > 0 || ca.fake_review_pct > 0 || hasBackendSummary)) {
-    const botClass  = ca.bot_likelihood_pct  >= 50 ? 'analysis-high' : ca.bot_likelihood_pct  >= 25 ? 'analysis-medium' : 'analysis-low';
-    const fakeClass = ca.fake_review_pct >= 50 ? 'analysis-high' : ca.fake_review_pct >= 25 ? 'analysis-medium' : 'analysis-low';
-    const commentFlags = ca.flags;
-    const commentFlagsHTML = commentFlags.length
-      ? `<div class="bot-analysis-flags">${commentFlags.map(f =>
-          `<div class="flag-item"><i class="fas fa-exclamation-triangle"></i>${String(f).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
-        ).join('')}</div>`
-      : '';
+  const hasCommentAnalysis = !!(ca && (ca.reviews_analyzed > 0 || ca.bot_likelihood_pct > 0 || ca.fake_review_pct > 0 || hasBackendSummary));
+
+  // Extract all comment-related variables so they're available for the unified block
+  let sentimentHTML = '';
+  let coverageHTML = '';
+  let commentFlags = [];
+  let commentFlagsHTML = '';
+  let botFakeRowsHTML = '';
+  let summaryHTML = '';
+
+  if (ca) {
+    commentFlags = ca.flags;
+    if (commentFlags.length) {
+      commentFlagsHTML = commentFlags.map(f =>
+        `<div class="flag-item"><i class="fas fa-exclamation-triangle"></i>${String(f).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
+      ).join('');
+    }
 
     // Dominant sentiment badge
     const sentimentVal = caRaw.dominant_sentiment || null;
@@ -821,7 +869,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       : sentimentVal === 'mixed' ? 'sentiment-mixed'
       : null;
     const sentimentLabel = { positive: 'Positive', suspicious: 'Caution', mixed: 'Mixed' }[sentimentVal] || sentimentVal;
-    const sentimentHTML = sentimentVal && sentimentClass
+    sentimentHTML = sentimentVal && sentimentClass
       ? `<span class="sentiment-badge ${sentimentClass}">${sentimentLabel}</span>`
       : '';
 
@@ -835,61 +883,27 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
           </div>`
       : '';
 
-    // Comment summary paragraph: always use backend-provided summary.
-    // Keep comment_summary object for diagnostics only.
-    const _commentSummaryDiagnostics = caRaw.comment_summary || null;
-    dbg("[Popup] summary_source:", caRaw.summary_source, "summary:", caRaw.summary);
-    const backendSummary = typeof caRaw.summary === 'string' ? caRaw.summary.trim() : '';
-    const visibleSummary = backendSummary || 'Groq summary unavailable for this scan.';
-    const summaryHTML = `<div class="bot-analysis-summary">${String(visibleSummary).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
-
     // Pages coverage warning callout
     const coverageNote = caRaw.pages_coverage_note
       ? String(caRaw.pages_coverage_note).replace(/</g,'&lt;').replace(/>/g,'&gt;')
       : null;
-    const coverageHTML = coverageNote
+    coverageHTML = coverageNote
       ? `<div class="coverage-callout"><i class="fas fa-exclamation-circle"></i> ${coverageNote}</div>`
       : '';
 
-    // Review themes block
-    const themes = caRaw.review_themes?.themes_detected;
-    let reviewThemesHTML = '';
-    if (Array.isArray(themes) && themes.length) {
-      const themeSummary = caRaw.review_themes.summary_text
-        ? `<p class="themes-summary">${String(caRaw.review_themes.summary_text).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>`
-        : '';
-      const themeDisclaimer = caRaw.review_themes.disclaimer
-        ? `<p class="themes-disclaimer">${String(caRaw.review_themes.disclaimer).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</p>`
-        : '';
-      const themeChips = themes.map(t => {
-        const chipClass = t.sentiment === 'positive' ? 'theme-chip--positive'
-          : t.sentiment === 'negative' ? 'theme-chip--negative'
-          : 'theme-chip--mixed';
-        const countLabel = t.mention_count != null ? ` <span class="theme-chip-count">&times;${t.mention_count}</span>` : '';
-        return `<span class="theme-chip ${chipClass}">${String(t.label || '').replace(/</g,'&lt;').replace(/>/g,'&gt;')}${countLabel}</span>`;
-      }).join('');
-      reviewThemesHTML = `
-        <div class="review-themes-block">
-          <div class="review-themes-header"><i class="fas fa-tags"></i> Review Themes</div>
-          ${themeSummary}
-          <div class="review-themes-chips">${themeChips}</div>
-          ${themeDisclaimer}
-        </div>`;
-    }
+    if (hasCommentAnalysis) {
+      const botClass  = ca.bot_likelihood_pct  >= 50 ? 'analysis-high' : ca.bot_likelihood_pct  >= 25 ? 'analysis-medium' : 'analysis-low';
+      const fakeClass = ca.fake_review_pct >= 50 ? 'analysis-high' : ca.fake_review_pct >= 25 ? 'analysis-medium' : 'analysis-low';
 
-    botAnalysisHTML = `
-      <div class="bot-analysis-block">
-        <button class="bot-analysis-header section-toggle" aria-expanded="false">
-          <span><i class="fas fa-shield-alt"></i> Risk Analysis</span>
-          <span class="section-toggle-meta">
-            ${summaryFlags.length ? `<span class="section-flag-count">${summaryFlags.length} flag${summaryFlags.length !== 1 ? 's' : ''}</span>` : ''}
-            ${sentimentHTML}
-            <span class="analysis-count">${ca.reviews_analyzed} reviewed</span>
-            <i class="fas fa-chevron-down section-toggle-icon"></i>
-          </span>
-        </button>
-        <div class="bot-analysis-collapsible section-collapsible" style="display:none;">
-          ${scanSummaryHTML}${productNoticeHTML}${(scanSummaryHTML || productNoticeHTML) ? '<hr class="analysis-inner-divider">' : ''}
+      // Comment summary paragraph: always use backend-provided summary.
+      // Keep comment_summary object for diagnostics only.
+      const _commentSummaryDiagnostics = caRaw.comment_summary || null;
+      dbg("[Popup] summary_source:", caRaw.summary_source, "summary:", caRaw.summary);
+      const backendSummary = typeof caRaw.summary === 'string' ? caRaw.summary.trim() : '';
+      const visibleSummary = backendSummary || 'Groq summary unavailable for this scan.';
+      summaryHTML = `<div class="bot-analysis-summary">${String(visibleSummary).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
+
+      botFakeRowsHTML = `
           <div class="bot-analysis-rows">
             <div class="analysis-row">
               <span class="analysis-label">Bot Likelihood</span>
@@ -900,30 +914,187 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
               <span class="analysis-badge ${fakeClass}">${ca.fake_review_pct}%</span>
             </div>
             ${diversityHTML}
-          </div>
-          ${summaryHTML}
-          ${commentFlagsHTML}
-          ${reviewThemesHTML}
+          </div>`;
+    }
+  }
+
+  const totalFlagCount = summaryFlags.length + commentFlags.length;
+  const hasListingContent = !!(scanSummaryHTML || productNoticeHTML);
+
+  if (hasListingContent || hasCommentAnalysis || commentFlagsHTML) {
+    let bodyContent = '';
+
+    // Listing Risks section
+    if (scanSummaryHTML) {
+      bodyContent += `<div class="flags-group-label">Listing Risks</div>${scanSummaryHTML}`;
+    }
+    if (productNoticeHTML) {
+      bodyContent += productNoticeHTML;
+    }
+
+    // Comment flags section
+    if (commentFlagsHTML) {
+      if (hasListingContent) {
+        bodyContent += `<hr class="analysis-inner-divider"><div class="flags-group-label">From Review Analysis</div>`;
+      }
+      bodyContent += commentFlagsHTML;
+    }
+
+    // Bot/fake/diversity rows and Groq summary — only when comment analysis data exists
+    if (hasCommentAnalysis) {
+      bodyContent += `<hr class="analysis-inner-divider">${botFakeRowsHTML}${summaryHTML}`;
+    }
+
+    const totalFlagCountBadge = totalFlagCount
+      ? `<span class="section-flag-count">${totalFlagCount} flag${totalFlagCount !== 1 ? 's' : ''}</span>`
+      : '';
+    const reviewedCountHTML = ca ? `<span class="analysis-count">${ca.reviews_analyzed} reviewed</span>` : '';
+
+    botAnalysisHTML = `
+      <div class="bot-analysis-block">
+        <button class="bot-analysis-header section-toggle" aria-expanded="${isCommentsScan ? 'true' : 'false'}">
+          <span><i class="fas fa-shield-alt"></i> Risk Flags</span>
+          <span class="section-toggle-meta">
+            ${totalFlagCountBadge}
+            ${sentimentHTML}
+            ${reviewedCountHTML}
+            <i class="fas fa-chevron-down section-toggle-icon"></i>
+          </span>
+        </button>
+        <div class="bot-analysis-collapsible section-collapsible" style="display:${isCommentsScan ? 'block' : 'none'};">
+          ${bodyContent}
         </div>
       </div>
       ${coverageHTML}`;
   }
 
-  // Fallback: comment analysis absent but listing flags/notice still need a home
-  if (!botAnalysisHTML && (scanSummaryHTML || productNoticeHTML)) {
-    botAnalysisHTML = `
-      <div class="bot-analysis-block">
-        <button class="bot-analysis-header section-toggle" aria-expanded="false">
-          <span><i class="fas fa-shield-alt"></i> Risk Analysis</span>
-          <span class="section-toggle-meta">
-            ${summaryFlags.length ? `<span class="section-flag-count">${summaryFlags.length} flag${summaryFlags.length !== 1 ? 's' : ''}</span>` : ''}
-            <i class="fas fa-chevron-down section-toggle-icon"></i>
-          </span>
-        </button>
-        <div class="bot-analysis-collapsible section-collapsible" style="display:none;">
-          ${scanSummaryHTML}${productNoticeHTML}
-        </div>
-      </div>`;
+  // Scan type detection was moved above botAnalysisHTML — these vars are already in scope.
+
+  // Score Breakdown — only rendered for Deep Scan.
+  // Deep scan layout:
+  //   LISTING SCORE — 70% weight  [category rows]  Sub-total: X pts × 70% = Y pts
+  //   REVIEW ANALYSIS — 30% weight  +Z pts  [bar]
+  //   ─────────  Y + Z = combined / 100 · Level
+  let scoreBreakdownHTML = '';
+  const sbd = (scanResult?.score_breakdown_details && Object.keys(scanResult.score_breakdown_details).length)
+    ? scanResult.score_breakdown_details
+    : (scanResult?.listing?.score_breakdown_details && Object.keys(scanResult.listing.score_breakdown_details).length)
+      ? scanResult.listing.score_breakdown_details
+      : null;
+  if (sbd && isDeepScan) {
+
+    const CAT_ICONS = { seller_attributes: 'fa-user-shield', listing_metadata: 'fa-tag', textual_nlp: 'fa-align-left', url_domain: 'fa-link' };
+    const compoundBonus = summaryFlags.includes('Unverified listing: no recorded sales or buyer ratings') ? 18 : 0;
+
+    // Always render url_domain when its score > 0 so category rows always sum to the listing total.
+    const urlScore = sbd['url_domain']?.score ?? 0;
+    const catKeys  = urlScore > 0
+      ? ['seller_attributes', 'listing_metadata', 'textual_nlp', 'url_domain']
+      : ['seller_attributes', 'listing_metadata', 'textual_nlp'];
+
+    const catRowsHTML = catKeys.map(key => {
+      const item = sbd[key];
+      if (!item) return '';
+      const score   = item.score ?? 0;
+      const max     = item.max ?? 25;
+      const label   = item.label || key;
+      const summary = item.summary ? String(item.summary).replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
+      const pct     = Math.round((score / max) * 100);
+      const barCls  = score >= 17 ? 'confidence-low' : score >= 9 ? 'confidence-moderate' : 'confidence-high';
+      const valClr  = score >= 17 ? '#c0003c' : score >= 9 ? '#8a6a00' : '#0f766e';
+      const icon    = CAT_ICONS[key] || 'fa-chart-bar';
+      return `
+        <div style="padding:5px 10px 6px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+            <span style="font-size:11px;font-weight:600;color:var(--color-dark-variant);"><i class="fas ${icon}"></i> ${label}</span>
+            <span style="font-size:11px;font-weight:700;color:${valClr};">${score} / ${max}</span>
+          </div>
+          <div class="confidence-bar-wrap"><div class="confidence-bar ${barCls}" style="width:${pct}%"></div></div>
+          ${summary ? `<div style="font-size:10px;color:var(--color-dark-variant);margin-top:3px;font-style:italic;">${summary}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    const totCls = safeRiskLevel === 'High' ? 'analysis-high' : safeRiskLevel === 'Medium' ? 'analysis-medium' : 'analysis-low';
+
+    if (isDeepScan) {
+      // ── Deep scan: two weighted sections ──────────────────────────────────────
+      const listingScore   = scanResult.listing?.risk_score ?? 0;
+      const listingWeight  = signals.weights.listing  ?? 0.7;
+      const commentWeight  = signals.weights.comments ?? 0.3;
+      const combinedScore  = scanResult.combined_risk_score;
+      const listingContrib = Math.round(listingScore * listingWeight);
+      const commentContrib = combinedScore - listingContrib;
+
+      const reviewBarPct = Math.min(Math.round((commentContrib / (commentWeight * 100)) * 100), 100);
+      const reviewBarCls = commentContrib >= Math.round(commentWeight * 100 * 0.67) ? 'confidence-low'
+        : commentContrib >= Math.round(commentWeight * 100 * 0.37) ? 'confidence-moderate'
+        : 'confidence-high';
+      const reviewValClr = commentContrib >= 10 ? '#c0003c' : commentContrib >= 5 ? '#8a6a00' : '#0f766e';
+      const listingSubtotalClr = listingContrib >= 17 ? '#c0003c' : listingContrib >= 9 ? '#8a6a00' : '#0f766e';
+
+      scoreBreakdownHTML = `
+        <div class="bot-analysis-block">
+          <button class="bot-analysis-header section-toggle" aria-expanded="false">
+            <span><i class="fas fa-chart-bar"></i> Score Breakdown</span>
+            <span class="section-toggle-meta"><i class="fas fa-chevron-down section-toggle-icon"></i></span>
+          </button>
+          <div class="bot-analysis-collapsible section-collapsible" style="display:none;">
+
+            <!-- LISTING SCORE section -->
+            <div style="padding:5px 10px 2px;display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--color-dark-variant);opacity:0.65;"><i class="fas fa-list-check"></i>&nbsp;Listing Score</span>
+              <span style="font-size:10px;font-weight:600;color:var(--color-dark-variant);opacity:0.65;">${Math.round(listingWeight * 100)}% weight</span>
+            </div>
+
+            ${catRowsHTML}
+
+            <!-- Sub-total: raw listing score → weighted contribution -->
+            <div style="margin:2px 8px 6px;padding:5px 10px;background:var(--color-light,#f8f9fa);border-radius:6px;display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:10px;color:var(--color-dark-variant);">Sub-total&nbsp;&nbsp;${listingScore}&nbsp;pts&nbsp;&times;&nbsp;${Math.round(listingWeight * 100)}%</span>
+              <span style="font-size:11px;font-weight:700;color:${listingSubtotalClr};">=&nbsp;${listingContrib}&nbsp;pts</span>
+            </div>
+
+            <hr class="analysis-inner-divider">
+
+            <!-- REVIEW ANALYSIS section -->
+            <div style="padding:5px 10px 2px;display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--color-dark-variant);opacity:0.65;"><i class="fas fa-comments"></i>&nbsp;Review Analysis</span>
+              <span style="font-size:10px;font-weight:600;color:var(--color-dark-variant);opacity:0.65;">${Math.round(commentWeight * 100)}% weight</span>
+            </div>
+
+            <div style="padding:5px 10px 6px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                <span style="font-size:11px;color:var(--color-dark-variant);">Bot &amp; fake-review signals</span>
+                <span style="font-size:11px;font-weight:700;color:${reviewValClr};">+${commentContrib}&nbsp;pts</span>
+              </div>
+              <div class="confidence-bar-wrap"><div class="confidence-bar ${reviewBarCls}" style="width:${reviewBarPct}%"></div></div>
+            </div>
+
+            <hr class="analysis-inner-divider">
+
+            <!-- Equation + total -->
+            <div style="padding:2px 10px 3px;text-align:right;font-size:10px;color:var(--color-dark-variant);font-style:italic;">
+              ${listingContrib}&nbsp;+&nbsp;${commentContrib}&nbsp;=&nbsp;${combinedScore}
+            </div>
+            <div class="analysis-row" style="margin:2px 10px 6px;">
+              <span class="analysis-label"><strong>Total Risk Score</strong></span>
+              <span class="analysis-badge ${totCls}">${combinedScore} / 100 &nbsp;&middot;&nbsp; ${safeRiskLevel}</span>
+            </div>
+            <div style="margin:0 8px 8px;padding:7px 10px;background:var(--color-light,#f8f9fa);border-radius:6px;font-size:10px;color:var(--color-dark-variant);line-height:1.5;">
+              <strong>Why the percentages?</strong><br>
+              This is a <em>Deep Scan</em> — it combines two sources of evidence.
+              Listing details (seller info, price, description) make up <strong>${Math.round(listingWeight * 100)}%</strong> of the score
+              because they are directly verifiable.
+              Buyer reviews make up <strong>${Math.round(commentWeight * 100)}%</strong> because they can be
+              faked or manipulated, so they carry less weight on their own.
+              The final score reflects both sources together.
+            </div>
+
+          </div>
+        </div>`;
+
+    }
+    // Normal scan (isDeepScan === false) — no Score Breakdown; score is not displayed.
   }
 
   let dataRowsHTML = '';
@@ -1011,9 +1182,12 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     : '';
 
   // Comments placeholder — actual reviews appended by appendReviewsToOutput
+  const commentsHint = isCommentsScan
+    ? 'Loading collected comments…'
+    : 'Run <strong>Deep Scan</strong> to collect comments.';
   const commentsPlaceholderHTML = `<div class="cdata-comments-placeholder" id="cdata-comments-slot">
     <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments</div>
-    <div class="cdata-comments-hint">Run <strong>Deep Scan</strong> to collect comments.</div>
+    <div class="cdata-comments-hint">${commentsHint}</div>
   </div>`;
 
   const panelBodyHTML = dataRowsHTML + specsInPanelHTML + descInPanelHTML + commentsPlaceholderHTML;
@@ -1040,15 +1214,10 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   const container = document.createElement('div');
   container.innerHTML = `
     <div class="result-card">
+      ${(isDeepScan || isCommentsScan || isFacebookScan) ? `
       <div class="risk-badge risk-${safeRiskLevel.toLowerCase()}"></div>
-
-      <div class="risk-level-text risk-${safeRiskLevel.toLowerCase()}">
-        ${safeRiskLevel.toUpperCase()} RISK
-      </div>
-
-      <div class="risk-score-text">
-        Score: ${safeRiskScore} / 100
-      </div>
+      <div class="risk-level-text risk-${safeRiskLevel.toLowerCase()}">${safeRiskLevel.toUpperCase()} RISK</div>` : ''}
+      ${(isDeepScan || isFacebookScan) ? `<div class="risk-score-text">Score: ${safeRiskScore} / 100</div>` : ''}
 
       ${confidenceHTML}
 
@@ -1058,6 +1227,8 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       </div>
 
       ${botAnalysisHTML}
+
+      ${scoreBreakdownHTML}
 
       ${collectedDataHTML}
 
@@ -1189,8 +1360,9 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     else output.appendChild(existingReviews);
   }
 
-  // Re-open the panel if it was open before the re-render
-  if (panelWasOpen) {
+  // Re-open the panel if it was open before the re-render,
+  // or auto-open for comments-only scan so reviews are immediately visible.
+  if (panelWasOpen || (isCommentsScan && !productData)) {
     const panel = container.querySelector('#cdata-body-panel');
     const toggle = container.querySelector('.cdata-toggle-input');
     if (panel) {
@@ -1528,8 +1700,18 @@ function bandFromScore(score) {
  * On success, re-renders the risk card with comment analysis included.
  */
 async function analyzeCommentsFromPopup(reviews, productData, baseSr, platform) {
+  function _failAnalyzing(msg) {
+    showToast(msg, 'error', 5000);
+    const _pl = output.querySelector('.collecting-panel');
+    if (_pl) {
+      const _ic = _pl.querySelector('.collecting-icon i');
+      const _lb = _pl.querySelector('.collecting-label');
+      if (_ic) _ic.className = 'fas fa-exclamation-circle';
+      if (_lb) _lb.textContent = 'Analysis failed — please try again.';
+    }
+  }
   const { accessToken } = await chrome.storage.local.get('accessToken');
-  if (!accessToken) return;
+  if (!accessToken) { _failAnalyzing('Please log in to analyze comments.'); return; }
   const commentsPayload = {
     platform,
     comments: reviews.map(r => ({ text: r.text || r.comment || '', date: r.date || null, rating_stars: r.rating_stars ?? r.rating ?? null })),
@@ -1540,7 +1722,7 @@ async function analyzeCommentsFromPopup(reviews, productData, baseSr, platform) 
   const body = useDeep ? { listing: productData, comments: commentsPayload } : commentsPayload;
   try {
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` }, body: JSON.stringify(body) });
-    if (!res.ok) return;
+    if (!res.ok) { _failAnalyzing(`Comment analysis failed (HTTP ${res.status}). Please try again.`); return; }
     const result = await res.json();
     const riskScore = result.combined_risk_score ?? result.risk_score ?? baseSr?.risk_score;
     const riskLevel = result.combined_risk_level ?? result.risk_level ?? baseSr?.risk_level;
@@ -1570,7 +1752,10 @@ async function analyzeCommentsFromPopup(reviews, productData, baseSr, platform) 
     showRiskAssessment(sr.risk_score, sr.risk_level, sr.description, sr.productData, sr.result);
     // showRiskAssessment clears output — re-append collected reviews
     appendReviewsToOutput(reviews, platform === 'lazada', Number(productData?.rating_count) === 0);
-  } catch (_) { /* silently fail */ }
+  } catch (err) {
+    dbg("[Popup] analyzeCommentsFromPopup error:", err);
+    _failAnalyzing('Comment analysis failed. Please try again.');
+  }
 }
 
 function synthesizeCommentOnlyEnvelope(commentsResult) {
@@ -1650,9 +1835,37 @@ chrome.runtime.onMessage.addListener((message) => {
       ? message.reviews
       : (Array.isArray(lastShopeeReviews) ? lastShopeeReviews : []);
     lastShopeeReviews = shopeeReviews;
-    appendReviewsToOutput(shopeeReviews, false, Number(lastShopeeProductData?.rating_count) === 0);
+    if (sr) {
+      appendReviewsToOutput(shopeeReviews, false, Number(lastShopeeProductData?.rating_count) === 0);
+    } else if (shopeeReviews.length > 0) {
+      // No result card yet — update collecting panel to Analyzing state while API call is in progress.
+      const _pl = output.querySelector('.collecting-panel');
+      if (_pl) {
+        const _ic = _pl.querySelector('.collecting-icon i');
+        const _lb = _pl.querySelector('.collecting-label');
+        if (_ic) _ic.className = 'fas fa-circle-notch fa-spin';
+        if (_lb) _lb.textContent = 'Analyzing comments\u2026';
+      }
+    } else {
+      // No result and zero reviews — panel would freeze on hourglass; show a clear message instead.
+      const _pl = output.querySelector('.collecting-panel');
+      if (_pl) {
+        const _ic = _pl.querySelector('.collecting-icon i');
+        const _lb = _pl.querySelector('.collecting-label');
+        const _ct = _pl.querySelector('.collecting-count');
+        if (_ic) _ic.className = 'fas fa-info-circle';
+        if (_lb) _lb.textContent = 'No reviews were collected.';
+        if (_ct) _ct.textContent = 'Scroll down to the reviews section and try again.';
+      }
+    }
     // Content script's API call failed — popup fetches comment analysis itself.
-    if (!message.result && shopeeReviews.length > 0) analyzeCommentsFromPopup(shopeeReviews, lastShopeeProductData, sr, 'shopee');
+    if (!message.result && shopeeReviews.length > 0) {
+      analyzeCommentsFromPopup(shopeeReviews, commentOnlyState === 'stopped' ? null : lastShopeeProductData, sr, 'shopee');
+    } else if (!message.result && shopeeReviews.length === 0 && commentOnlyState !== 'stopped' && lastShopeeProductData) {
+      // Deep scan context with 0 reviews — still call /analyze/deep with empty comments so
+      // combined_risk_score is returned and the score badge renders correctly.
+      analyzeCommentsFromPopup([], lastShopeeProductData, sr, 'shopee');
+    }
   }
 
   if (message.type === "SHOPEE_PROGRESSIVE_RESTARTED") {
@@ -1728,8 +1941,36 @@ chrome.runtime.onMessage.addListener((message) => {
       ? message.reviews
       : (Array.isArray(lastLazadaReviews) ? lastLazadaReviews : []);
     lastLazadaReviews = lazadaReviews;
-    appendReviewsToOutput(lazadaReviews, true, Number(lastLazadaProductData?.rating_count) === 0);
-    if (!message.result && lazadaReviews.length > 0) analyzeCommentsFromPopup(lazadaReviews, lastLazadaProductData, lr, 'lazada');
+    if (lr) {
+      appendReviewsToOutput(lazadaReviews, true, Number(lastLazadaProductData?.rating_count) === 0);
+    } else if (lazadaReviews.length > 0) {
+      // No result card yet — update collecting panel to Analyzing state while API call is in progress.
+      const _pl = output.querySelector('.collecting-panel');
+      if (_pl) {
+        const _ic = _pl.querySelector('.collecting-icon i');
+        const _lb = _pl.querySelector('.collecting-label');
+        if (_ic) _ic.className = 'fas fa-circle-notch fa-spin';
+        if (_lb) _lb.textContent = 'Analyzing comments\u2026';
+      }
+    } else {
+      // No result and zero reviews — panel would freeze on hourglass; show a clear message instead.
+      const _pl = output.querySelector('.collecting-panel');
+      if (_pl) {
+        const _ic = _pl.querySelector('.collecting-icon i');
+        const _lb = _pl.querySelector('.collecting-label');
+        const _ct = _pl.querySelector('.collecting-count');
+        if (_ic) _ic.className = 'fas fa-info-circle';
+        if (_lb) _lb.textContent = 'No reviews were collected.';
+        if (_ct) _ct.textContent = 'Scroll down to Ratings & Reviews and try again.';
+      }
+    }
+    if (!message.result && lazadaReviews.length > 0) {
+      analyzeCommentsFromPopup(lazadaReviews, commentOnlyState === 'stopped' ? null : lastLazadaProductData, lr, 'lazada');
+    } else if (!message.result && lazadaReviews.length === 0 && commentOnlyState !== 'stopped' && lastLazadaProductData) {
+      // Deep scan context with 0 reviews — still call /analyze/deep with empty comments so
+      // combined_risk_score is returned and the score badge renders correctly.
+      analyzeCommentsFromPopup([], lastLazadaProductData, lr, 'lazada');
+    }
   }
 
   if (message.type === "LAZADA_PROGRESSIVE_RESTARTED") {
@@ -1763,7 +2004,7 @@ function performCommentOnlyScan() {
     }
 
     const contentScript = isShopee ? "src/content/content_shopee.js" : "src/content/content_lazada.js";
-    const scanData = isShopee ? lastShopeeProductData : lastLazadaProductData;
+    const scanData = null; // comment-only scan always uses /analyze/comments, never /analyze/deep
 
     commentOnlyBtn.innerHTML = '<i class="fas fa-sync spinning"></i> Starting...';
     commentOnlyBtn.disabled = true;
@@ -2050,12 +2291,14 @@ function appendReviewsToOutput(reviews, isLazada = false, listingHasNoReviews = 
         <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments</div>
         <div class="cdata-comments-hint"><i class="fas fa-spinner fa-spin" style="margin-right:6px;"></i>Scanning for comments&hellip;<br><small style="opacity:.7;">Scroll down to Ratings &amp; Reviews if it hasn't loaded yet.</small></div>`;
     } else {
+      const _scanStopped = progressiveState === 'stopped' || commentOnlyState === 'stopped';
+      const _label = _scanStopped ? 'No reviews were collected during this scan.' : 'No comments found.';
       const hint = isLazada
-        ? "Scroll down to the <strong>Ratings &amp; Reviews</strong> section first so it loads, then Deep Scan again."
-        : "Scroll down to the reviews section first, then scan again.";
+        ? "Scroll down to <strong>Ratings &amp; Reviews</strong> to load them, then scan again."
+        : "Scroll down to the reviews section to load them, then scan again.";
       divider.innerHTML = `
         <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments</div>
-        <div class="cdata-comments-hint">No comments found.<br>${hint}</div>`;
+        <div class="cdata-comments-hint">${_label}<br>${hint}</div>`;
     }
   } else {
     const cards = reviews.map(r => {

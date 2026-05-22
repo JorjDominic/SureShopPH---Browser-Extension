@@ -489,35 +489,135 @@
   // Seller Rating Extractor (Facebook)
   // ===============================
   function extractSellerRating() {
-    const bodyText = document.body.innerText;
+    const RATING_WITH_COUNT = /([1-5](?:\.\d+)?)\s*[·•\u00b7]?\s*\(?(\d+)\s*ratings?\)?/i;
+    const RATING_SLASH_5    = /([1-5](?:\.\d+)?)\s*\/\s*5/i;
+    const RATING_OUT_OF_5   = /([1-5](?:\.\d+)?)\s+out\s+of\s+5/i;
 
-    // Pattern 1: "X.X/5 (Y ratings)" or "X.X out of 5"
-    const starMatch = bodyText.match(/(\d(?:\.\d)?)\s*\/\s*5\s*(?:\(.*?rating|\d+\s*rating)/i)
-      || bodyText.match(/(\d(?:\.\d)?)\s+out\s+of\s+5/i);
-    if (starMatch) {
-      const v = parseFloat(starMatch[1]);
-      if (v >= 0 && v <= 5) return { value: `${v} / 5`, confidence: 'high' };
+    function parseRating(text) {
+      let m;
+      m = text.match(RATING_WITH_COUNT);
+      if (m) {
+        const v = parseFloat(m[1]);
+        if (v >= 1 && v <= 5) return { value: `${v} / 5 (${m[2]} ratings)`, confidence: 'high' };
+      }
+      m = text.match(RATING_SLASH_5) || text.match(RATING_OUT_OF_5);
+      if (m) {
+        const v = parseFloat(m[1]);
+        if (v >= 1 && v <= 5) return { value: `${v} / 5`, confidence: 'medium' };
+      }
+      return null;
     }
 
-    // Pattern 2: seller profile shows a plain "X.X" star rating near the name
-    // Facebook shows this in the seller info section as e.g. "4.9  (73 ratings)"
-    const ratingBlock = bodyText.match(/([1-5](?:\.\d)?)\s*\(?(\d+)\s*ratings?\)?/i);
-    if (ratingBlock) {
-      const v = parseFloat(ratingBlock[1]);
-      if (v >= 1 && v <= 5) return { value: `${v} / 5 (${ratingBlock[2]} ratings)`, confidence: 'medium' };
+    function extractCount(text) {
+      const m = text.match(/\((\d+)\)/);
+      return m ? m[1] : null;
     }
 
-    // Pattern 3: "Joined" line immediately precedes a rating in some layouts
-    const joinedIdx = bodyText.search(/\bJoined\s+\w+\b/i);
-    if (joinedIdx !== -1) {
-      const nearby = bodyText.slice(joinedIdx, joinedIdx + 200);
-      const nearMatch = nearby.match(/([1-5](?:\.\d)?)\s*\/\s*5/i);
-      if (nearMatch) {
-        const v = parseFloat(nearMatch[1]);
-        if (v >= 0 && v <= 5) return { value: `${v} / 5`, confidence: 'medium' };
+    function countUnicodeStars(text) {
+      const filled = (text.match(/[\u2605★⭐]/g) || []).length;
+      const empty  = (text.match(/[\u2606☆]/g) || []).length;
+      if (filled === 0 && empty === 0) return null;
+      return { filled, total: filled + empty };
+    }
+
+    // Strategy 1: DOM — walk up from profile link, inspect each container level.
+    // Facebook renders stars as SVGs, so we check:
+    //   1a) numeric pattern in innerText (covers "4.9 · 73 ratings" etc.)
+    //   1b) aria-label on any child element (covers "Rated 5 out of 5 stars" etc.)
+    //   1c) counting unicode star chars if SVG renders them as text
+    //   1d) just the count "(23)" when stars have no accessible label
+    const profileLink = document.querySelector(
+      'a[href*="/marketplace/profile/"], a[href*="/user/"], a[href*="/profile.php"]'
+    );
+    if (profileLink) {
+      let el = profileLink.parentElement;
+      for (let depth = 0; depth < 6 && el; depth++, el = el.parentElement) {
+        const text = el.innerText || '';
+
+        // 1a: numeric rating in text
+        const numResult = parseRating(text);
+        if (numResult) return numResult;
+
+        // 1b: aria-label on any child (SVG star container usually carries this)
+        for (const child of el.querySelectorAll('[aria-label]')) {
+          const label = child.getAttribute('aria-label') || '';
+          if (/out of 5|star|rated/i.test(label)) {
+            const m = label.match(/([1-5](?:\.\d+)?)/); 
+            if (m) {
+              const v = parseFloat(m[1]);
+              if (v >= 1 && v <= 5) {
+                const count = extractCount(text);
+                return { value: count ? `${v} / 5 (${count} ratings)` : `${v} / 5`, confidence: 'high' };
+              }
+            }
+          }
+        }
+
+        // 1c: unicode star counting
+        const stars = countUnicodeStars(text);
+        if (stars && stars.total >= 3 && stars.total <= 5) {
+          const count = extractCount(text);
+          return {
+            value: count ? `${stars.filled} / 5 (${count} ratings)` : `${stars.filled} / 5`,
+            confidence: 'medium'
+          };
+        }
+
+        // 1d: count-only fallback when "Highly rated" badge confirms seller has ratings
+        if (/highly rated/i.test(text)) {
+          const count = extractCount(text);
+          if (count) return { value: `(${count} ratings)`, confidence: 'low' };
+        }
       }
     }
 
+    // Strategy 2: aria-label on rating elements anywhere on the page
+    for (const el of document.querySelectorAll('[aria-label*="out of 5" i], [aria-label*="rated" i], [aria-label*="rating" i], [aria-label*="stars" i]')) {
+      const label = el.getAttribute('aria-label') || '';
+      const m = label.match(/([1-5](?:\.\d+)?)/); 
+      if (m) {
+        const v = parseFloat(m[1]);
+        if (v >= 1 && v <= 5) return { value: `${v} / 5`, confidence: 'high' };
+      }
+    }
+
+    // Strategy 3: narrow text window after "Seller information" heading
+    const bodyText = document.body.innerText;
+    const sellerIdx = bodyText.search(/\bSeller\s+information\b/i);
+    if (sellerIdx !== -1) {
+      const section = bodyText.slice(sellerIdx, sellerIdx + 400);
+      const result = parseRating(section);
+      if (result) return result;
+      const stars = countUnicodeStars(section);
+      if (stars && stars.total >= 3 && stars.total <= 5) {
+        const count = extractCount(section);
+        return { value: count ? `${stars.filled} / 5 (${count} ratings)` : `${stars.filled} / 5`, confidence: 'medium' };
+      }
+    }
+
+    // Strategy 4: narrow window around "Joined" keyword
+    const joinedIdx = bodyText.search(/\bJoined\s+\w+\b/i);
+    if (joinedIdx !== -1) {
+      const nearby = bodyText.slice(Math.max(0, joinedIdx - 200), joinedIdx + 200);
+      const result = parseRating(nearby);
+      if (result) return result;
+    }
+
+    // Strategy 5: full-body fallback
+    const result = parseRating(bodyText);
+    if (result) return result;
+
+    return { value: null, confidence: 'low' };
+  }
+
+  // ===============================
+  // Seller Join Date Extractor (Facebook)
+  // ===============================
+  function extractSellerJoinDate() {
+    const bodyText = document.body.innerText;
+    // "Joined Facebook in 2012", "Joined September 2018", "Joined in 2020"
+    const m = bodyText.match(/Joined(?:\s+Facebook)?\s+(?:in\s+)?([A-Za-z]+\s+\d{4}|\d{4})/i);
+    if (m) return { value: cleanText(m[1]), confidence: 'high' };
     return { value: null, confidence: 'low' };
   }
 
@@ -677,7 +777,7 @@
     const TRACKED = {
       shopee:   ['price','sold_count','rating','rating_count','response_rate','shop_age','seller_name','description','image_count'],
       lazada:   ['price','sold_count','rating','rating_count','seller_name','seller_rating','description','image_count'],
-      facebook: ['price','seller_name','seller_rating','condition','location','listing_date','description','image_count'],
+      facebook: ['price','seller_name','seller_rating','shop_age','condition','location','listing_date','description','image_count'],
     };
     const missing = (TRACKED[platform] || []).filter(f => {
       const v = d[f];
@@ -712,6 +812,7 @@
       const price = extractPrice();
       const sellerName = extractSellerName();
       const sellerRating = extractSellerRating();
+      const sellerJoinDate = extractSellerJoinDate();
       const condition = extractCondition();
       const locationInfo = extractLocation();
       const listingDate = extractListingDate();
@@ -740,6 +841,7 @@
         price_is_variant: price.variant || false,
         seller_name: sellerName.value,
         seller_rating: sellerRating.value,
+        shop_age: sellerJoinDate.value,
         condition: condition.value,
         location: locationInfo.value,
         listing_date: listingDate.value,
