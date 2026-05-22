@@ -363,10 +363,14 @@ function showScanCard() {
     const ratingMatch = text.match(/\b([0-5]\.\d)\b/);
     const countMatch  = text.match(/\b([\d,.]+K?\+?)\s+Ratings?\b/i);
 
-    // No ratings yet — only fall back to 0/0 when no actual rating data is found.
+    // No ratings yet — fall back to 0/0 when no rating count is found.
+    // A stray X.X number (e.g. the seller's shop rating) can satisfy ratingMatch
+    // even when the product itself has "No Ratings Yet". The rating count is the
+    // reliable signal: if there is no "X Ratings" text, the product has no reviews.
     // On Shopee Mall pages, "no ratings yet" can appear in the seller section
-    // while the product itself already has ratings, so check actual data first.
-    if (/no\s+ratings?\s+yet/i.test(text) && !ratingMatch && !countMatch) {
+    // while the product itself already has ratings — those pages will always have
+    // a countMatch, so this guard won't fire incorrectly.
+    if (/no\s+ratings?\s+yet/i.test(text) && !countMatch) {
       return {
         rating:       { value: 0, confidence: "high" },
         rating_count: { value: 0, confidence: "high" }
@@ -884,6 +888,7 @@ function showScanCard() {
           date: r.date || null,
           rating_stars: r.rating_stars ?? r.rating ?? null
         })),
+        no_reviews_found: progressiveReviews.length === 0,
         page_number: 1,
         total_pages: 1
       };

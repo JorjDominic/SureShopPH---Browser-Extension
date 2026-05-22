@@ -152,6 +152,32 @@
 .collecting-score-high   { background: rgba(239,68,68,0.12);   color: #c0392b; border: 1px solid rgba(239,68,68,0.3); }
 
 /* ---------------------------------------------------------------
+   Step indicator — shown inside .collecting-panel during Quick Scan
+   to communicate which phase of the scan is in progress.
+   --------------------------------------------------------------- */
+.scan-loading-steps {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 6px;
+  width: 100%;
+  max-width: 210px;
+}
+.scan-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #94a3b8;
+  letter-spacing: 0.15px;
+}
+.scan-step i { width: 13px; text-align: center; font-size: 11px; }
+.scan-step--active { color: #0ea5a4; font-weight: 700; }
+.scan-step--done   { color: #22c55e; }
+
+/* ---------------------------------------------------------------
    Result UI — compact side-panel layout.
    Uses CSS Grid for the risk hero row; readable fonts throughout.
    --------------------------------------------------------------- */
@@ -172,7 +198,13 @@
 /* ================================================================
    RESULT CARD — two-column grid: badge left, info right
    ================================================================ */
+@keyframes result-card-reveal {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 #output .result-card {
+  animation: result-card-reveal 0.35s ease forwards;
   display: grid !important;
   grid-template-columns: 42px 1fr !important;
   gap: 0 10px !important;
@@ -375,6 +407,14 @@
 #output .analysis-label  { font-size: 10.5px !important; }
 #output .analysis-badge  { font-size: 9.5px !important; padding: 1px 8px !important; border-radius: 8px !important; font-weight: 700 !important; }
 #output .bot-analysis-flags .flag-item { font-size: 10px !important; }
+
+/* Thin rule between listing-flag content and comment-analysis content
+   inside the merged Risk Analysis collapsible body */
+#output .analysis-inner-divider {
+  border: none !important;
+  border-top: 1px solid rgba(0,0,0,0.08) !important;
+  margin: 6px 0 !important;
+}
 
 /* ================================================================
    COLLECTED DATA ACCORDION

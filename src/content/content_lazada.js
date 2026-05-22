@@ -999,6 +999,117 @@
 
     const isMetaLine = l => isDateLine(l) || isSkipLine(l);
 
+    // ---- DOM-anchored star helpers ----
+    // Used by both the DOM per-item loop AND the post-processing supplement that
+    // runs when the review item class selector misses Lazada's obfuscated names.
+    const isGoldenColor = v => {
+      if (!v) return false;
+      const m = v.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      if (m) { const [r,,b]=[+m[1],+m[2],+m[3]]; return r>150 && b<120 && (r-b)>80; }
+      const hm = v.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+      if (hm) { const r=parseInt(hm[1],16),b=parseInt(hm[3],16); return r>150 && b<120 && (r-b)>80; }
+      return /^(gold|goldenrod|orange|yellow|darkorange)$/i.test((v||'').trim());
+    };
+
+    const starsFromDomEl = el => {
+      // aria-label: "4 out of 5", "4 stars", "Rated 4" etc.
+      const ariaEl = el.querySelector(
+        '[aria-label*="out of 5"],[aria-label*="stars"],[aria-label*="star"],[aria-label*="rating"]'
+      );
+      if (ariaEl) {
+        const m = (ariaEl.getAttribute('aria-label')||'').match(/(\d+(\.\d+)?)/);
+        if (m) { const v=parseFloat(m[1]); if(v>=1&&v<=5) return Math.min(5,Math.round(v)); }
+      }
+      // data-score / data-rating / data-stars / data-rate
+      const dataEl = el.querySelector('[data-score],[data-rating],[data-stars],[data-rate]');
+      if (dataEl) {
+        const raw = dataEl.dataset.score||dataEl.dataset.rating||dataEl.dataset.stars||dataEl.dataset.rate||'';
+        const v = parseFloat(raw);
+        if (!isNaN(v)&&v>=1&&v<=5) return Math.round(v);
+      }
+      // SVG colour: count SVG elements whose fill/colour resolves to golden/yellow.
+      // NOTE: no upper limit on TOTAL svg count — a row may have 5 stars + other icons.
+      // We only restrict the count of GOLDEN svgs to 1-5.
+      const svgs = [...el.querySelectorAll('svg')];
+      if (svgs.length >= 1) {
+        const filled = svgs.filter(s => {
+          try {
+            const cs = window.getComputedStyle(s);
+            if (isGoldenColor(cs.fill)||isGoldenColor(cs.color)||isGoldenColor(s.getAttribute('fill')||'')) return true;
+            return [...s.querySelectorAll('path,polygon,circle,rect,use')].some(p => {
+              try {
+                const pcs = window.getComputedStyle(p);
+                return isGoldenColor(pcs.fill)||isGoldenColor(pcs.color)||isGoldenColor(p.getAttribute('fill')||'');
+              } catch(_) { return false; }
+            });
+          } catch(_) { return false; }
+        }).length;
+        if (filled >= 1 && filled <= 5) return filled;
+      }
+      // Icon-font stars: <i> or <em> elements with a star-related class and golden color
+      const iconEls = [...el.querySelectorAll('i,em,span')].filter(c => {
+        const cls = ((c.getAttribute('class')||'')+(c.getAttribute('data-icon')||'')).toLowerCase();
+        return /star|rating|ic-star|rate/.test(cls);
+      });
+      if (iconEls.length >= 1 && iconEls.length <= 5) {
+        const filledIcons = iconEls.filter(c => {
+          try {
+            const cs = window.getComputedStyle(c);
+            return isGoldenColor(cs.color)||isGoldenColor(cs.backgroundColor)||isGoldenColor(cs.fill||'');
+          } catch(_) { return false; }
+        }).length;
+        if (filledIcons >= 1 && filledIcons <= 5) return filledIcons;
+      }
+      // Numeric text leaf ("5", "4.0" etc.)
+      const leaf = [...el.querySelectorAll('*')].find(c =>
+        c.childElementCount===0 && /^[1-5](\.[0-9])?$/.test((c.textContent||'').trim())
+      );
+      if (leaf) { const v=parseFloat(leaf.textContent.trim()); if(v>=1&&v<=5) return Math.round(v); }
+      return null;
+    };
+
+    // For reviews whose star count is still null, find the date text node in the live DOM
+    // and walk up ancestor elements trying starsFromDomEl at each level.
+    // This is the primary fix for modern Lazada: CSS-module-obfuscated class names cause
+    // the review item selector to match nothing, so the per-item DOM loop never runs.
+    // The date string is unique enough to anchor us to the right review container.
+    const supplementStars = reviewList => {
+      for (const rev of reviewList) {
+        if (rev.rating_stars !== null || !rev.date) continue;
+        try {
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          let tNode;
+          let found = false;
+          // Try EVERY text node matching this date (first match may be wrong page section)
+          while ((tNode = walker.nextNode()) && !found) {
+            if (tNode.textContent.trim() !== rev.date) continue;
+            let el = tNode.parentElement;
+            let dbgSvgCounts = [];
+            for (let up=0; up<7&&el; up++) {
+              const svgCount = el.querySelectorAll('svg').length;
+              dbgSvgCounts.push(svgCount);
+              const stars = starsFromDomEl(el);
+              if (stars !== null) { rev.rating_stars = stars; found = true; break; }
+              el = el.parentElement;
+            }
+            if (!found) {
+              console.warn('[SureShop] supplementStars: date "' + rev.date + '" found in DOM but no stars detected. SVG counts per ancestor level:', dbgSvgCounts);
+            }
+          }
+          if (!found && rev.rating_stars === null) {
+            // Check whether the date string was even present in the DOM
+            const allText = document.body.innerText || '';
+            if (!allText.includes(rev.date)) {
+              console.warn('[SureShop] supplementStars: date "' + rev.date + '" NOT found anywhere in DOM text');
+            }
+          }
+        } catch(e) {
+          console.warn('[SureShop] supplementStars error:', e);
+        }
+      }
+      return reviewList;
+    };
+
     // ---- Try to read page-level average rating once ----
     // Lazada shows something like "4.7" or "4.7 / 5" near the reviews header.
     // We use this ONLY as a last resort when per-review stars can't be detected.
@@ -1075,26 +1186,25 @@
         }
       }
 
-      // 3. SVG stars: use getComputedStyle to detect golden/yellow filled stars
-      // Lazada fills active stars with ~#FFB800 (rgb ~255,184,0)
+      // 3. SVG stars: detect filled vs empty by computed/inline colour on the SVG
+      //    element itself AND its child shapes. Handles rgb(), rgba(), hex, named colours.
       if (!filledStars) {
-        const paths = [...item.querySelectorAll('svg path, svg polygon, svg rect, svg circle')];
-        const filledSvgs = new Set();
-        for (const p of paths) {
-          try {
-            const fill = window.getComputedStyle(p).fill || '';
-            const m = fill.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-            if (m) {
-              const [r, g, b] = [+m[1], +m[2], +m[3]];
-              // Golden/yellow range: high red, moderate-high green, low blue
-              if (r > 180 && g > 100 && g < 230 && b < 70 && r >= g) {
-                const parentSvg = p.closest('svg');
-                if (parentSvg) filledSvgs.add(parentSvg);
-              }
-            }
-          } catch (_) {}
+        const svgs = [...item.querySelectorAll('svg')];
+        if (svgs.length >= 1 && svgs.length <= 5) {
+          const filled = svgs.filter(s => {
+            try {
+              const cs = window.getComputedStyle(s);
+              if (isGoldenColor(cs.fill)||isGoldenColor(cs.color)||isGoldenColor(s.getAttribute('fill')||'')) return true;
+              return [...s.querySelectorAll('path,polygon,circle,rect,use')].some(p => {
+                try {
+                  const pcs = window.getComputedStyle(p);
+                  return isGoldenColor(pcs.fill)||isGoldenColor(pcs.color)||isGoldenColor(p.getAttribute('fill')||'');
+                } catch(_) { return false; }
+              });
+            } catch(_) { return false; }
+          }).length;
+          if (filled >= 1 && filled <= 5) filledStars = filled;
         }
-        if (filledSvgs.size >= 1 && filledSvgs.size <= 5) filledStars = filledSvgs.size;
       }
 
       // 4. Class name keyword fallback (older Lazada builds)
@@ -1102,20 +1212,57 @@
         const filled = item.querySelectorAll(
           '[class*="star--on"], [class*="star_on"], [class*="star-on"], ' +
           '[class*="rating-active"], [class*="star-active"], ' +
-          '[class*="filled"], [class*="ic-star-fill"]'
+          '[class*="ic-star-fill"]'
         ).length;
         if (filled > 0) filledStars = Math.min(filled, 5);
       }
 
-      // 5. Numeric text leaf inside a rating container (e.g. "4.0" displayed beside stars)
+      // 5. Numeric text leaf anywhere inside this review item (e.g. "4.0" beside the stars).
+      // It is safe to search all descendants here because `item` is a single review card;
+      // the product-level average rating lives outside this element's subtree.
       if (!filledStars) {
         const ratingTextEl = [...item.querySelectorAll('*')].find(el =>
           el.childElementCount === 0 &&
-          /^[1-5](\.\d)?$/.test((el.textContent || '').trim())
+          /^[1-5](\.[0-9])?$/.test((el.textContent || '').trim())
         );
         if (ratingTextEl) {
           const v = parseFloat(ratingTextEl.textContent.trim());
           if (v >= 1 && v <= 5) filledStars = Math.round(v);
+        }
+      }
+
+      // 6. Item innerText scan — catches star glyphs or numeric ratings that modern
+      // Lazada renders as visible text but that aren't reachable via DOM attributes or
+      // class names (obfuscated CSS modules).
+      if (!filledStars) {
+        const itemLines = (item.innerText || '').split('\n').map(l => l.trim()).filter(Boolean);
+
+        // 6a. Star glyph line (e.g. "★★★★☆" → 4)
+        for (const line of itemLines) {
+          if (/★/.test(line) && /^[★☆✩✭\s]+$/.test(line)) {
+            const g = parseStarGlyphs(line);
+            if (g) { filledStars = g; break; }
+          }
+        }
+
+        // 6b. Decimal form "4.0", "3.5" — unambiguous as a rating
+        if (!filledStars) {
+          for (const line of itemLines) {
+            if (/^[1-5]\.[0-9]$/.test(line)) {
+              filledStars = Math.round(parseFloat(line));
+              break;
+            }
+          }
+        }
+
+        // 6c. Bare integer "1"–"5" only when it appears BEFORE the date line
+        // (that is where Lazada places the star number in innerText).
+        // Helpful-vote counts and other numbers appear after the review body.
+        if (!filledStars) {
+          const dateIdx = itemLines.findIndex(l => isDateLine(l));
+          const preDate = dateIdx > 0 ? itemLines.slice(0, dateIdx) : itemLines.slice(0, 4);
+          const numLine = preDate.find(l => /^[1-5]$/.test(l));
+          if (numLine) filledStars = parseInt(numLine, 10);
         }
       }
 
@@ -1215,6 +1362,9 @@
       }
     }
 
+    // Supplement any null ratings from the DOM anchor lookup before returning
+    supplementStars(reviews);
+
     if (reviews.length > 0) return { value: reviews, confidence: "high" };
 
     // ---- Strategy 2: innerText parsing — primary fallback ----
@@ -1309,6 +1459,19 @@
           inSellerResponse = true; continue;
         }
         if (inSellerResponse) continue;
+
+        // Check for a star rating appearing AFTER the date and before the review body.
+        // Some Lazada layouts place the numeric rating or glyph row after the date line.
+        // This must come before isSkipLine (which would swallow bare integers).
+        if (rating_stars === null && textLines.length === 0) {
+          if (/★/.test(lines[j]) && /^[★☆✩✭\s]+$/.test(lines[j])) {
+            rating_stars = parseStarGlyphs(lines[j]); continue;
+          }
+          if (/^[1-5](\.[0-9])?$/.test(lines[j])) {
+            rating_stars = Math.round(parseFloat(lines[j])); continue;
+          }
+        }
+
         if (isVariantLine(lines[j])) {
           if (!variant) variant = getVariantValue(lines[j]);
           // If the variant line also contains review text after the label value,
@@ -1336,12 +1499,12 @@
       }
     }
 
-    // Apply page-level average rating to any reviews that have no individual rating
-    if (pageAvgRating) {
-      for (const r of reviews) {
-        if (!r.rating_stars) r.rating_stars = pageAvgRating;
-      }
-    }
+    // NOTE: pageAvgRating is intentionally NOT applied as a per-review fallback.
+    // Assigning the rounded page average (e.g. 4.7 → 5) to every review that
+    // lacks an individually-detected rating caused all comments to show 5 stars.
+
+    // Final DOM-anchor supplement for reviews found by the innerText path
+    supplementStars(reviews);
 
     return { value: reviews, confidence: reviews.length > 0 ? "medium" : "low" };
   }
@@ -1639,6 +1802,7 @@
           date: r.date || null,
           rating_stars: r.rating_stars ?? r.rating ?? null
         })),
+        no_reviews_found: progressiveReviews.length === 0,
         page_number: 1,
         total_pages: 1
       };

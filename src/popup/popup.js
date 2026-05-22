@@ -603,12 +603,17 @@ activateBtn.addEventListener("click", async () => {
   activateBtn.textContent = "Activating...";
   activateBtn.disabled = true;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
   try {
     const res = await fetch(`${SURESHOP_API_BASE}/activate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ activation_key: key })
+      body: JSON.stringify({ activation_key: key }),
+      signal: controller.signal
     });
+    clearTimeout(timeout);
     if (res.status === 401 || res.status === 403) {
       showActivationMessage("Invalid activation key. Please try again.");
       return;
@@ -636,8 +641,13 @@ activateBtn.addEventListener("click", async () => {
     // Network error — keep the user on the activation screen instead of storing
     // a non-JWT raw key, which would break every authenticated request later.
     dbgErr("Activation error:", error);
-    showActivationMessage("Cannot reach the SureShop server. Check your connection and try again.");
+    if (error.name === "AbortError") {
+      showActivationMessage("Connection timed out. Check that the SureShop server is running and try again.");
+    } else {
+      showActivationMessage("Cannot reach the SureShop server. Check your connection and try again.");
+    }
   } finally {
+    clearTimeout(timeout);
     activateBtn.textContent = "Activate";
     activateBtn.disabled = false;
   }
@@ -777,18 +787,9 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       </div>`;
   }
 
-  const scanSummarySection = (scanSummaryHTML || productNoticeHTML)
-    ? `<div class="scan-summary-section" id="scanSummary">
-        <button class="scan-summary-header section-toggle" aria-expanded="false">
-          <span><i class="fas fa-flag"></i> Risk Analysis</span>
-          <span class="section-toggle-meta">
-            ${summaryFlags.length ? `<span class="section-flag-count">${summaryFlags.length} flag${summaryFlags.length !== 1 ? 's' : ''}</span>` : ''}
-            <i class="fas fa-chevron-down section-toggle-icon"></i>
-          </span>
-        </button>
-        <div class="scan-summary-body section-collapsible" style="display:none;">${scanSummaryHTML}${productNoticeHTML}</div>
-      </div>`
-    : '';
+  // scanSummaryHTML and productNoticeHTML are merged into the combined Risk Analysis
+  // section built below — scanSummarySection is kept as empty for backward compat.
+  const scanSummarySection = '';
 
   // Bot / Fake Review Analysis — only shown when reviews were actually analyzed
   let botAnalysisHTML = '';
@@ -879,14 +880,16 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     botAnalysisHTML = `
       <div class="bot-analysis-block">
         <button class="bot-analysis-header section-toggle" aria-expanded="false">
-          <span><i class="fas fa-robot"></i> Comment Analysis</span>
+          <span><i class="fas fa-shield-alt"></i> Risk Analysis</span>
           <span class="section-toggle-meta">
+            ${summaryFlags.length ? `<span class="section-flag-count">${summaryFlags.length} flag${summaryFlags.length !== 1 ? 's' : ''}</span>` : ''}
             ${sentimentHTML}
             <span class="analysis-count">${ca.reviews_analyzed} reviewed</span>
             <i class="fas fa-chevron-down section-toggle-icon"></i>
           </span>
         </button>
         <div class="bot-analysis-collapsible section-collapsible" style="display:none;">
+          ${scanSummaryHTML}${productNoticeHTML}${(scanSummaryHTML || productNoticeHTML) ? '<hr class="analysis-inner-divider">' : ''}
           <div class="bot-analysis-rows">
             <div class="analysis-row">
               <span class="analysis-label">Bot Likelihood</span>
@@ -904,6 +907,23 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
         </div>
       </div>
       ${coverageHTML}`;
+  }
+
+  // Fallback: comment analysis absent but listing flags/notice still need a home
+  if (!botAnalysisHTML && (scanSummaryHTML || productNoticeHTML)) {
+    botAnalysisHTML = `
+      <div class="bot-analysis-block">
+        <button class="bot-analysis-header section-toggle" aria-expanded="false">
+          <span><i class="fas fa-shield-alt"></i> Risk Analysis</span>
+          <span class="section-toggle-meta">
+            ${summaryFlags.length ? `<span class="section-flag-count">${summaryFlags.length} flag${summaryFlags.length !== 1 ? 's' : ''}</span>` : ''}
+            <i class="fas fa-chevron-down section-toggle-icon"></i>
+          </span>
+        </button>
+        <div class="bot-analysis-collapsible section-collapsible" style="display:none;">
+          ${scanSummaryHTML}${productNoticeHTML}
+        </div>
+      </div>`;
   }
 
   let dataRowsHTML = '';
@@ -1036,8 +1056,6 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
         <div class="risk-message-label"><i class="fas fa-clipboard-check"></i> Scan Summary</div>
         <div class="risk-message">${riskMessage}</div>
       </div>
-
-      ${scanSummarySection}
 
       ${botAnalysisHTML}
 
@@ -1213,7 +1231,16 @@ function performScan(isAutomatic = false, withReviews = false) {
       commentOnlyBtn.style.opacity = '0.5';
     }
     scanBtn.disabled = true;
-    output.textContent = "🔍 Collecting product information...";
+    const _scanLabel = withReviews ? 'Deep Scanning&hellip;' : 'Quick Scanning&hellip;';
+    output.innerHTML = `<div class="collecting-panel">
+      <div class="collecting-icon"><i class="fas fa-circle-notch fa-spin"></i></div>
+      <div class="collecting-label">${_scanLabel}</div>
+      <div class="scan-loading-steps">
+        <div class="scan-step scan-step--active"><i class="fas fa-circle-notch fa-spin"></i>&ensp;Reading page data</div>
+        <div class="scan-step"><i class="fas fa-circle-dot"></i>&ensp;AI risk analysis</div>
+      </div>
+    </div>`;
+    output.style.padding = '10px 12px';
 
     // Get current tab
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
@@ -1307,7 +1334,13 @@ function performScan(isAutomatic = false, withReviews = false) {
 
       dbg("Extracted data:", response);
       dbg("Product name from extraction:", response.product_name);
-      output.textContent = "📡 Analyzing product data...";
+      // Advance the step indicator: mark page-data done, activate AI analysis step
+      const _stepsEl = output.querySelector('.scan-loading-steps');
+      if (_stepsEl) {
+        _stepsEl.innerHTML = `
+          <div class="scan-step scan-step--done"><i class="fas fa-check"></i>&ensp;Page data collected</div>
+          <div class="scan-step scan-step--active"><i class="fas fa-circle-notch fa-spin"></i>&ensp;AI risk analysis&hellip;</div>`;
+      }
 
       try {
         // Format data for /analyze/listing
@@ -1536,7 +1569,7 @@ async function analyzeCommentsFromPopup(reviews, productData, baseSr, platform) 
     dbg("[Popup] cache written:", cacheType, sr.risk_score);
     showRiskAssessment(sr.risk_score, sr.risk_level, sr.description, sr.productData, sr.result);
     // showRiskAssessment clears output — re-append collected reviews
-    appendReviewsToOutput(reviews, platform === 'lazada');
+    appendReviewsToOutput(reviews, platform === 'lazada', Number(productData?.rating_count) === 0);
   } catch (_) { /* silently fail */ }
 }
 
@@ -1617,7 +1650,7 @@ chrome.runtime.onMessage.addListener((message) => {
       ? message.reviews
       : (Array.isArray(lastShopeeReviews) ? lastShopeeReviews : []);
     lastShopeeReviews = shopeeReviews;
-    appendReviewsToOutput(shopeeReviews, false);
+    appendReviewsToOutput(shopeeReviews, false, Number(lastShopeeProductData?.rating_count) === 0);
     // Content script's API call failed — popup fetches comment analysis itself.
     if (!message.result && shopeeReviews.length > 0) analyzeCommentsFromPopup(shopeeReviews, lastShopeeProductData, sr, 'shopee');
   }
@@ -1695,7 +1728,7 @@ chrome.runtime.onMessage.addListener((message) => {
       ? message.reviews
       : (Array.isArray(lastLazadaReviews) ? lastLazadaReviews : []);
     lastLazadaReviews = lazadaReviews;
-    appendReviewsToOutput(lazadaReviews, true);
+    appendReviewsToOutput(lazadaReviews, true, Number(lastLazadaProductData?.rating_count) === 0);
     if (!message.result && lazadaReviews.length > 0) analyzeCommentsFromPopup(lazadaReviews, lastLazadaProductData, lr, 'lazada');
   }
 
@@ -1996,7 +2029,7 @@ unbindBtn.addEventListener("click", async () => {
   }
 });
 
-function appendReviewsToOutput(reviews, isLazada = false) {
+function appendReviewsToOutput(reviews, isLazada = false, listingHasNoReviews = false) {
   const stars = (n) => {
     if (!n || n < 1) return "";
     const filled = Math.min(n, 5);
@@ -2008,7 +2041,11 @@ function appendReviewsToOutput(reviews, isLazada = false) {
   divider.className = "cdata-comments-slot-filled";
 
   if (reviews.length === 0) {
-    if (isLazada && progressiveState === "scanning") {
+    if (listingHasNoReviews) {
+      divider.innerHTML = `
+        <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments</div>
+        <div class="cdata-comments-hint">This listing has no reviews yet.</div>`;
+    } else if (isLazada && progressiveState === "scanning") {
       divider.innerHTML = `
         <div class="cdata-desc-label"><i class="fas fa-comments"></i> Comments</div>
         <div class="cdata-comments-hint"><i class="fas fa-spinner fa-spin" style="margin-right:6px;"></i>Scanning for comments&hellip;<br><small style="opacity:.7;">Scroll down to Ratings &amp; Reviews if it hasn't loaded yet.</small></div>`;
