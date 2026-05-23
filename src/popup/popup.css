@@ -473,6 +473,27 @@ html, body {
     line-height: 1.4;
     padding: 0 4px;
 }
+.trust-indicators {
+    margin-top: 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.trust-indicator-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 11px;
+    color: #0f766e;
+    line-height: 1.4;
+    padding: 0 4px;
+}
+.trust-indicator-item i {
+    color: #16a34a;
+    font-size: 11px;
+    margin-top: 1px;
+    flex-shrink: 0;
+}
 .scan-time {
     font-size: 10px;
     color: var(--color-info-dark);

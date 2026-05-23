@@ -1203,6 +1203,15 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       <div id="cdata-body-panel" class="cdata-body cdata-body--hidden">${panelBodyHTML}</div>
     </div>`;
 
+  // Trust indicators — positive signals from the backend (Shopee Mall, LazMall, Top Seller, etc.)
+  // Only rendered when the backend returns at least one positive signal.
+  const _posSignals = Array.isArray(scanResult?.positive_signals) ? scanResult.positive_signals : [];
+  const positiveSignalsHTML = _posSignals.length
+    ? `<div class="trust-indicators">${_posSignals.map(s =>
+        `<div class="trust-indicator-item"><i class="fas fa-circle-check"></i>${String(s.message || s).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
+      ).join('')}</div>`
+    : '';
+
   // Preserve live-reviews section and panel-open state across risk-card re-renders
   const existingReviews = document.getElementById("sureshop-reviews-output");
   const panelWasOpen = document.getElementById("cdata-body-panel")?.classList.contains("cdata-body--open");
@@ -1224,6 +1233,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       <div class="risk-message-section">
         <div class="risk-message-label"><i class="fas fa-clipboard-check"></i> Scan Summary</div>
         <div class="risk-message">${riskMessage}</div>
+        ${positiveSignalsHTML}
       </div>
 
       ${botAnalysisHTML}
