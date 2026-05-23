@@ -815,10 +815,15 @@
         /\d+(\.\d+)?\s+out\s+of\s+5/i.test(l) ||     // "4.8 out of 5" anywhere in line
         /^All\s*\d+\s*Star/i.test(l) ||               // "All5 Star (544)..."
         /With\s+(Comments?|Media)/i.test(l) ||         // "With Comments (45)"
+        /With\s+images?\/videos?/i.test(l) ||          // "With images/videos (381)"
         /^\d{4}-\d{2}-\d{2}[\s|]/.test(l) ||          // "2025-11-04 16:57" / "2026-01-26 22:39 |"
         /^\d{1,2}\s+\w{3,9}\s+\d{4}$/.test(l) ||     // "06 Jan 2025"
         /\|\s*Variation:/i.test(l) ||                  // "date | Variation: ..."
-        /^[a-z0-9]\*{3,}[a-z0-9]+$/i.test(l)          // masked username "r*****l"
+        /^[a-z0-9]\*{3,}[a-z0-9]+$/i.test(l) ||       // masked username "r*****l"
+        /^Reviews?\s*\(\d/i.test(l) ||                 // "Reviews(1911)" Lazada review count label
+        /^Filter\s+by\s+All/i.test(l) ||               // "Filter by All stars"
+        /^Sort\s+by\s+Relevance/i.test(l) ||           // "Sort by Relevance"
+        /^Repeat\s+customer/i.test(l)                  // "Repeat customer (321)"
       );
     };
 

@@ -658,8 +658,7 @@
     const looksLikeDescription = (txt) => {
       if (!txt) return false;
       const t = txt.trim();
-      return t.length > 15 &&
-             !priceRe.test(t) &&
+      return t.length > 5 &&
              !structuredLineRe.test(t) &&
              !uiLineRe.test(t);
     };
@@ -675,7 +674,7 @@
       if (parts.length >= 2) {
         const descParts = parts.filter(p => looksLikeDescription(p));
         if (descParts.length > 0) {
-          return { value: cleanText(descParts.join(" ")).slice(0, 3000), confidence: "medium" };
+          return { value: cleanText(descParts.join(" ")).slice(0, 5000), confidence: "medium" };
         }
       }
 
@@ -683,7 +682,7 @@
       const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
       const descLines = lines.filter(looksLikeDescription);
       if (descLines.length > 0) {
-        return { value: cleanText(descLines.join(' ')).slice(0, 3000), confidence: "medium" };
+        return { value: cleanText(descLines.join(' ')).slice(0, 5000), confidence: "medium" };
       }
       // Otherwise og:description had nothing useful — continue to body strategies
     }
@@ -696,9 +695,9 @@
     // that isn't structured/UI noise.
     const condIdx = bodyText.search(/\bCondition\b/i);
     if (condIdx !== -1) {
-      const window = bodyText.slice(condIdx, condIdx + 3000);
+      const window = bodyText.slice(condIdx, condIdx + 5000);
       const stopMatch = window.search(
-        /\n(See\s+translation|See\s+less|Seller\s+information|Seller\s+details|Location\s+is\s+approximate|Similar\s+listings?)\b/i
+        /\n(See\s+translation|Seller\s+information|Seller\s+details|Similar\s+listings?)\b/i
       );
       const slice = stopMatch !== -1 ? window.slice(0, stopMatch) : window;
 
@@ -709,7 +708,7 @@
 
       if (candidateLines.length > 0) {
         // Join consecutive description lines — preserves multi-line listings
-        return { value: cleanText(candidateLines.join('\n')).slice(0, 3000), confidence: "high" };
+        return { value: cleanText(candidateLines.join('\n')).slice(0, 5000), confidence: "high" };
       }
     }
 
@@ -723,7 +722,7 @@
       );
       const trimmed = (stopLine !== -1 ? lines.slice(0, stopLine) : lines).filter(looksLikeDescription);
       if (trimmed.length > 0) {
-        return { value: cleanText(trimmed.join('\n')).slice(0, 3000), confidence: "medium" };
+        return { value: cleanText(trimmed.join('\n')).slice(0, 5000), confidence: "medium" };
       }
     }
 

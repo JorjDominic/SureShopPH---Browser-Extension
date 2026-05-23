@@ -981,7 +981,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     : (scanResult?.listing?.score_breakdown_details && Object.keys(scanResult.listing.score_breakdown_details).length)
       ? scanResult.listing.score_breakdown_details
       : null;
-  if (sbd && isDeepScan) {
+  if (false /* DISABLED: sbd && isDeepScan */) {
 
     const CAT_ICONS = { seller_attributes: 'fa-user-shield', listing_metadata: 'fa-tag', textual_nlp: 'fa-align-left', url_domain: 'fa-link' };
     const compoundBonus = summaryFlags.includes('Unverified listing: no recorded sales or buyer ratings') ? 18 : 0;
@@ -1254,13 +1254,14 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
           <div class="report-form-label">Why are you reporting this listing?</div>
           <select class="report-select" id="reportReason">
             <option value="">Select a reason...</option>
-            <option value="scam">Scam / Fraud</option>
-            <option value="fake_product">Fake or Counterfeit Product</option>
-            <option value="misleading">Misleading Description</option>
-            <option value="wrong_price">Wrong / Hidden Pricing</option>
-            <option value="other">Other</option>
+            <option value="scam">Suspicious listing activity</option>
+            <option value="fake_product">Possibly inauthentic product</option>
+            <option value="misleading">Inaccurate or incomplete description</option>
+            <option value="wrong_price">Unusual or unclear pricing</option>
+            <option value="false_positive">False positive</option>
+            <option value="other">Other concern</option>
           </select>
-          <textarea class="report-textarea" id="reportDetails" placeholder="Additional details (optional)" rows="3" maxlength="500"></textarea>
+          <textarea class="report-textarea" id="reportDetails" placeholder="Explanation" rows="3" maxlength="500" required></textarea>
           <div class="report-form-actions">
             <button class="report-submit-btn" id="reportSubmitBtn"><i class="fas fa-paper-plane"></i> Submit</button>
             <button class="report-cancel-btn" id="reportCancelBtn">Cancel</button>
@@ -1301,6 +1302,11 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
         return;
       }
       const details = container.querySelector('#reportDetails').value.trim();
+      if (!details) {
+        reportFeedback.textContent = 'Please provide an explanation.';
+        reportFeedback.className = 'report-feedback report-feedback--error';
+        return;
+      }
 
       reportSubmitBtn.disabled = true;
       reportSubmitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';

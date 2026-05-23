@@ -1407,6 +1407,12 @@ function showScanCard() {
     const price = extractMainPrice();
     const sold = extractSoldCount();
     const ratings = extractRatings();
+    // Fallback: if sold count not found but rating count is, use rating count as proxy
+    const soldValue = (sold.value !== null && sold.value !== undefined)
+      ? sold.value
+      : (ratings.rating_count.value !== null && ratings.rating_count.value !== undefined
+        ? String(ratings.rating_count.value)
+        : null);
     const responseRate = extractResponseRate();
     const shopAge = extractShopAge();
     const sellerName = extractSellerName();
@@ -1421,7 +1427,7 @@ function showScanCard() {
       platform: 'shopee',
       product_name: cleanText(document.title) || "Unknown Product",
       price: price.value,
-      sold_count: sold.value,
+      sold_count: soldValue,
       rating: ratings.rating.value,
       rating_count: ratings.rating_count.value,
       response_rate: responseRate.value,
