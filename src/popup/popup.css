@@ -366,7 +366,7 @@ html, body {
     overflow-wrap: break-word;
 }
 #output:empty::before {
-    content: "Click Quick Scan to analyze the current page...";
+    content: "Click Scan Now to analyze the current page...";
     color: var(--color-info-dark);
     font-style: italic;
     display: block;
@@ -451,9 +451,21 @@ html, body {
     font-weight: 600;
 }
 .risk-high {
+    background: rgba(234, 88, 12, 0.12);
+    border: 3px solid #ea580c;
+    color: #ea580c !important;
+    font-weight: 600;
+}
+.risk-very-high {
     background: rgba(220, 38, 38, 0.1);
     border: 3px solid var(--color-danger);
     color: var(--color-danger) !important;
+    font-weight: 600;
+}
+.risk-very-low {
+    background: rgba(5, 150, 105, 0.14);
+    border: 3px solid #059669;
+    color: #059669 !important;
     font-weight: 600;
 }
 .risk-level-text {
@@ -1454,7 +1466,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 .analysis-badge.analysis-medium { color: #8a6a00; }
 .analysis-badge.analysis-high { color: #c0003c; }
 
-/* ===== COMMENT ANALYSIS — EXTENDED FIELDS ===== */
+/* ===== COMMENT ANALYSIS � EXTENDED FIELDS ===== */
 
 /* Dominant sentiment badge in header */
 .sentiment-badge {
@@ -1806,4 +1818,99 @@ input:checked + .slider:before { transform: translateX(20px); }
     animation: guidanceBannerIn 0.25s ease;
 }
 
-
+/* ===== REDESIGNED HEADER ===== */
+.app-header.header {
+    padding: 14px 14px 12px !important;
+    min-height: 84px;
+    background:
+        radial-gradient(circle at 8% 10%, rgba(255,255,255,.24), transparent 26%),
+        linear-gradient(135deg, #0f766e 0%, #0d9488 46%, #14b8a6 100%) !important;
+    border-bottom: 1px solid rgba(255,255,255,.18);
+    box-shadow: 0 16px 34px rgba(15, 118, 110, .22);
+    overflow: visible !important;
+    text-align: left !important;
+}
+.app-header::before { opacity: .85; }
+.brand-block {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding-right: 132px;
+}
+.logo-mark {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,.18);
+    border: 1px solid rgba(255,255,255,.28);
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.28);
+    flex: 0 0 auto;
+}
+.logo-mark i { margin-right: 0 !important; font-size: 18px !important; }
+.brand-copy h2 {
+    margin: 0;
+    color: #fff;
+    font-size: 17px;
+    line-height: 1.1;
+    font-weight: 850;
+    letter-spacing: -.25px;
+}
+.brand-copy span {
+    display: block;
+    margin-top: 3px;
+    color: rgba(255,255,255,.82);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .42px;
+    text-transform: uppercase;
+}
+.header-helper {
+    position: relative;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.20);
+    color: rgba(255,255,255,.92);
+    font-size: 10.5px;
+    font-weight: 700;
+}
+.header-helper i { margin-right: 0 !important; }
+.header-actions {
+    position: absolute;
+    top: 13px;
+    right: 13px;
+    z-index: 4;
+}
+.window-controls.zoom-controls {
+    position: static !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    margin: 0 !important;
+    padding: 4px !important;
+    border-radius: 999px !important;
+    background: rgba(255,255,255,.18) !important;
+    border: 1px solid rgba(255,255,255,.28) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 8px 18px rgba(15,23,42,.10);
+}
+.window-btn.zoom-btn {
+    width: 29px !important;
+    height: 29px !important;
+    min-width: 29px !important;
+    border-radius: 999px !important;
+    border: none !important;
+    background: rgba(255,255,255,.20) !important;
+    color: #fff !important;
+}
+.window-btn.zoom-btn:hover { background: rgba(255,255,255,.32) !important; transform: translateY(-1px); }
