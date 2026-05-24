@@ -280,6 +280,7 @@
 }
 
 /* — Full-width children — */
+#output .result-product-name,
 #output .risk-message-section,
 #output .confidence-block,
 #output .scan-summary-section,

@@ -417,6 +417,21 @@ html, body {
     box-shadow: var(--box-shadow);
     animation: slideIn 0.4s ease;
 }
+.result-product-name {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--color-dark);
+    text-align: left;
+    line-height: 1.4;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--color-light);
+    width: 100%;
+    box-sizing: border-box;
+    max-height: 2.8em;
+    overflow: hidden;
+    word-break: normal;
+    overflow-wrap: anywhere;
+}
 .scan-status-badge {
     background: rgba(14, 165, 164, 0.12);
     border: 1px solid rgba(14, 165, 164, 0.25);

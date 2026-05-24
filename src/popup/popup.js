@@ -1226,6 +1226,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   const container = document.createElement('div');
   container.innerHTML = `
     <div class="result-card">
+      ${productData?.product_name ? `<div class="result-product-name">${String(productData.product_name).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
       ${(isDeepScan || isCommentsScan || isFacebookScan) ? `
       <div class="risk-badge risk-${safeRiskLevel.toLowerCase()}"></div>
       <div class="risk-level-text risk-${safeRiskLevel.toLowerCase()}">${safeRiskLevel.toUpperCase()} RISK</div>` : ''}
