@@ -959,7 +959,6 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
           <span><i class="fas fa-shield-alt"></i> Key Issues Found</span>
           <span class="section-toggle-meta">
             ${totalFlagCountBadge}
-            ${sentimentHTML}
             ${reviewedCountHTML}
             <i class="fas fa-chevron-down section-toggle-icon"></i>
           </span>
@@ -1206,13 +1205,46 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       <div id="cdata-body-panel" class="cdata-body cdata-body--hidden">${panelBodyHTML}</div>
     </div>`;
 
-  // Trust indicators — positive signals from the backend (Shopee Mall, LazMall, Top Seller, etc.)
-  // Only rendered when the backend returns at least one positive signal.
+  // Positive signals section — collapsible block styled like "Key Issues Found"
   const _posSignals = Array.isArray(scanResult?.positive_signals) ? scanResult.positive_signals : [];
-  const positiveSignalsHTML = _posSignals.length
-    ? `<div class="trust-indicators">${_posSignals.map(s =>
-        `<div class="trust-indicator-item"><i class="fas fa-circle-check"></i>${String(s.message || s).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
-      ).join('')}</div>`
+  const positivesSectionHTML = _posSignals.length
+    ? (() => {
+        const itemsHTML = _posSignals.map(s =>
+          `<div class="flag-item pos-signal-item"><i class="fas fa-circle-check"></i><span>${String(s.message || s).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span></div>`
+        ).join('');
+        const countBadge = `<span class="section-pos-count">${_posSignals.length} signal${_posSignals.length !== 1 ? 's' : ''}</span>`;
+        return `
+      <div class="bot-analysis-block positives-block">
+        <button class="bot-analysis-header positives-header section-toggle" aria-expanded="false">
+          <span><i class="fas fa-circle-check"></i> Positive Signals</span>
+          <span class="section-toggle-meta">${countBadge}<i class="fas fa-chevron-down section-toggle-icon"></i></span>
+        </button>
+        <div class="bot-analysis-collapsible section-collapsible" style="display:none;">
+          <div class="bot-analysis-flags">${itemsHTML}</div>
+        </div>
+      </div>`;
+      })()
+    : '';
+
+  // Advice section — collapsible block with recommendations from the backend
+  const _recs = Array.isArray(scanResult?.recommendations) ? scanResult.recommendations : [];
+  const adviceSectionHTML = _recs.length
+    ? (() => {
+        const itemsHTML = _recs.map(r =>
+          `<div class="advice-item"><i class="fas fa-lightbulb"></i><span>${String(r).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span></div>`
+        ).join('');
+        const countBadge = `<span class="section-advice-count">${_recs.length} tip${_recs.length !== 1 ? 's' : ''}</span>`;
+        return `
+      <div class="bot-analysis-block advice-block">
+        <button class="bot-analysis-header advice-header section-toggle" aria-expanded="false">
+          <span><i class="fas fa-lightbulb"></i> Advice</span>
+          <span class="section-toggle-meta">${countBadge}<i class="fas fa-chevron-down section-toggle-icon"></i></span>
+        </button>
+        <div class="bot-analysis-collapsible section-collapsible" style="display:none;">
+          <div class="advice-list">${itemsHTML}</div>
+        </div>
+      </div>`;
+      })()
     : '';
 
   // Preserve live-reviews section and panel-open state across risk-card re-renders
@@ -1237,8 +1269,11 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       <div class="risk-message-section">
         <div class="risk-message-label"><i class="fas fa-clipboard-check"></i> Scan Summary</div>
         <div class="risk-message">${riskMessage}</div>
-        ${positiveSignalsHTML}
       </div>
+
+      ${positivesSectionHTML}
+
+      ${adviceSectionHTML}
 
       ${botAnalysisHTML}
 

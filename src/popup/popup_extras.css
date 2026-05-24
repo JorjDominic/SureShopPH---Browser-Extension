@@ -655,6 +655,70 @@
 .ss-risk-legend { list-style: none; padding: 0; margin: 0; }
 .ss-risk-legend li { font-size: 12px; padding: 4px 0; color: #475569; }
 .ss-risk-legend li .ss-pill { margin-right: 6px; }
+/* ================================================================
+   POSITIVE SIGNALS SECTION
+   ================================================================ */
+.positives-header {
+  background: rgba(22, 163, 74, 0.07) !important;
+  color: #14532d !important;
+}
+.positives-header i { color: #16a34a !important; }
+.section-pos-count {
+  font-size: 9px;
+  font-weight: 600;
+  color: #166534;
+  background: rgba(22, 163, 74, 0.12);
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.pos-signal-item {
+  color: #166534 !important;
+}
+.pos-signal-item i {
+  color: #16a34a !important;
+}
+
+/* ================================================================
+   ADVICE SECTION
+   ================================================================ */
+.advice-header {
+  background: rgba(59, 130, 246, 0.07) !important;
+  color: #1e3a5f !important;
+}
+.advice-header i { color: #3b82f6 !important; }
+.section-advice-count {
+  font-size: 9px;
+  font-weight: 600;
+  color: #1e40af;
+  background: rgba(59, 130, 246, 0.12);
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.advice-list {
+  padding: 6px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.advice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  color: #1e3a5f;
+  line-height: 1.4;
+}
+.advice-item i {
+  color: #3b82f6;
+  font-size: 10px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
 .ss-feedback-row {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0;
 }
