@@ -1596,10 +1596,9 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   container.innerHTML = `
     <div class="result-card">
       ${productData?.product_name ? `<div class="result-product-name">${String(productData.product_name).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
-      ${(isDeepScan || isCommentsScan || isFacebookScan) ? `
       <div class="risk-badge risk-${safeRiskLevel.toLowerCase().replace(/\s+/g, '-')}"></div>
-      <div class="risk-level-text risk-${safeRiskLevel.toLowerCase().replace(/\s+/g, '-')}">${safeRiskLevel.toUpperCase()} RISK</div>` : ''}
-      ${(isDeepScan || isFacebookScan) ? `<div class="risk-score-text">Score: ${safeRiskScore} / 100</div>` : ''}
+      <div class="risk-level-text risk-${safeRiskLevel.toLowerCase().replace(/\s+/g, '-')}">${safeRiskLevel.toUpperCase()} RISK</div>
+      ${!isCommentsScan ? `<div class="risk-score-text">Score: ${safeRiskScore} / 100</div>` : ''}
 
       ${confidenceHTML}
 
