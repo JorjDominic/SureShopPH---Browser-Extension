@@ -91,9 +91,9 @@ const activationMessage = document.getElementById("activationMessage");
 // -----------------------------------------------------------------------
 (function initZoom() {
   const ZOOM_KEY   = "sureshop_zoom";
-  const ZOOM_STEP  = 0.1;
-  const ZOOM_MIN   = 1.0;   // 100% = default (max zoom-out)
-  const ZOOM_MAX   = 2.0;   // 200%
+  const ZOOM_STEP  = 0.05;
+  const ZOOM_MIN   = 0.90;  // 90% = minimum (compact view)
+  const ZOOM_MAX   = 1.15;  // 115% = maximum (enlarged view)
   const root       = document.getElementById("popup-root");
   const zoomInBtn  = document.getElementById("zoomInBtn");
   const zoomOutBtn = document.getElementById("zoomOutBtn");
@@ -704,8 +704,345 @@ function computeConfidence(productData) {
   return { confidenceLevel, confidencePercentage, fieldsPresent, fieldsMissing, total: FIELDS.length };
 }
 
+// -----------------------------------------------------------------------
+// Local intelligence helpers
+// -----------------------------------------------------------------------
+function isPresent(v) {
+  return v !== null && v !== undefined && v !== '' && !(typeof v === 'number' && Number.isNaN(v));
+}
+function fbNormalizeText(v) { return String(v || '').replace(/\s+/g, ' ').trim(); }
+function fbSafeArray(v) { return Array.isArray(v) ? v : []; }
+function localBand(score) {
+  const n = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
+  if (n >= 85) return 'Very High';
+  if (n >= 70) return 'High';
+  if (n >= 40) return 'Medium';
+  if (n >= 20) return 'Low';
+  return 'Very Low';
+}
+function countToNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const raw = String(v).trim().replace(/,/g, '');
+  const m = raw.match(/([0-9]+(?:\.[0-9]+)?)([KkMm])?\+?/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return null;
+  const unit = (m[2] || '').toUpperCase();
+  return unit === 'M' ? Math.round(n * 1000000) : unit === 'K' ? Math.round(n * 1000) : Math.round(n);
+}
+function looksLikeBotSellerName(name) {
+  const s = fbNormalizeText(name);
+  if (!s || s.length <= 3) return true;
+  if (/^[a-z]{1,4}[0-9][a-z0-9]*$/i.test(s) && !/[\s._-]/.test(s)) return true;
+  if (/^[a-z0-9]{5,12}$/i.test(s) && /[a-z]/i.test(s) && /[0-9]/.test(s) && !/[\s._-]/.test(s)) return true;
+  if (/^[a-z]{1,3}[A-Z]{2,}[a-zA-Z0-9]*$/.test(s)) return true;
+  if (/^(store|shop|seller|official|lazada|shopee|unknown)$/i.test(s)) return true;
+  return false;
+}
+function classifyCommerceCategory(text) {
+  const t = String(text || '').toLowerCase();
+  if (/\b(mclaren|ferrari|lamborghini|porsche|bmw|mercedes|toyota|honda|ford|car\b|vehicle|sedan|suv|pickup|truck)\b/.test(t)) return 'vehicle';
+  if (/\b(motorcycle|scooter|aerox|nmax|raider|click|mio|beat|pcx|adv|rusi|yamaha)\b/.test(t)) return 'motorcycle';
+  if (/\b(iphone|ipad|macbook|samsung|galaxy|xiaomi|oppo|vivo|realme|tecno|infinix|phone|smartphone|laptop|tablet)\b/.test(t)) return 'electronics';
+  if (/\b(ps5|ps4|xbox|nintendo|switch|steam\s*deck|console|graphics\s*card|gpu|rtx|gtx)\b/.test(t)) return 'gaming';
+  if (/\b(rolex|cartier|lv|louis\s*vuitton|gucci|prada|dior|luxury|designer)\b/.test(t)) return 'luxury';
+  return 'general';
+}
+function categoryMinPrice(category, text) {
+  const t = String(text || '').toLowerCase();
+  const relaxed = /\b(defective|for\s*parts?|parts?\s*only|repair|scrap|damaged|not\s*working|used|second\s*hand|pre[-\s]?owned|sira)\b/.test(t);
+  const floors = { vehicle: relaxed ? 30000 : 100000, motorcycle: relaxed ? 5000 : 15000, electronics: relaxed ? 500 : 3000, gaming: relaxed ? 1000 : 5000, luxury: relaxed ? 1000 : 5000, general: 20 };
+  return floors[category] || 20;
+}
+
+// -----------------------------------------------------------------------
+// Facebook Marketplace local confidence (9-field model)
+// -----------------------------------------------------------------------
+function computeFacebookConfidence(productData) {
+  const fields = [
+    { label: 'Product title',             present: isPresent(productData.product_name) && !/^(search results|unknown listing)$/i.test(fbNormalizeText(productData.product_name)) },
+    { label: 'Listed price',              present: isPresent(productData.price) || isPresent(productData.price_display) },
+    { label: 'Seller name',               present: isPresent(productData.seller_name) },
+    { label: 'Seller rating',             present: isPresent(productData.seller_rating) },
+    { label: 'Seller Facebook join year', present: isPresent(productData.shop_age) },
+    { label: 'Condition',                 present: isPresent(productData.condition) },
+    { label: 'Location',                  present: isPresent(productData.location) },
+    { label: 'Listed date',               present: isPresent(productData.listing_date) },
+    { label: 'Description',               present: isPresent(productData.description) && fbNormalizeText(productData.description).length >= 25 },
+  ];
+  const present = fields.filter(f => f.present).length;
+  const missing = fields.filter(f => !f.present).map(f => f.label);
+  const percentage = Math.round((present / fields.length) * 100);
+  const level = percentage >= 78 ? 'High' : percentage >= 50 ? 'Moderate' : 'Low';
+  return { level, percentage, fields_present: present, missing_fields: missing, total_fields: fields.length };
+}
+
+// -----------------------------------------------------------------------
+// Shopee / Lazada local confidence (10-field model)
+// -----------------------------------------------------------------------
+function computeCommerceConfidence(productData) {
+  const p = String(productData?.platform || '').toLowerCase();
+  if (!['shopee', 'lazada'].includes(p)) return null;
+  const fields = [
+    { label: 'Product title',    present: isPresent(productData.product_name) },
+    { label: 'Price',            present: isPresent(productData.price) && !productData.price_is_variant && !productData.price_is_ambiguous },
+    { label: 'Seller name',      present: isPresent(productData.seller_name) && !looksLikeBotSellerName(productData.seller_name) },
+    { label: 'Product rating',   present: isPresent(productData.rating) },
+    { label: 'Review count',     present: isPresent(productData.rating_count) },
+    { label: 'Sold count',       present: isPresent(productData.sold_count) },
+    { label: p === 'shopee' ? 'Response rate' : 'Seller rating', present: p === 'shopee' ? isPresent(productData.response_rate) : isPresent(productData.seller_rating) },
+    { label: p === 'shopee' ? 'Shop age' : 'Seller badge/history', present: p === 'shopee' ? isPresent(productData.shop_age) : (Array.isArray(productData.seller_badges) && productData.seller_badges.length > 0) },
+    { label: 'Description',      present: isPresent(productData.description) && fbNormalizeText(productData.description).length >= 60 },
+    { label: 'Images',           present: Number(productData.image_count) > 0 },
+  ];
+  const present = fields.filter(f => f.present).length;
+  const missing = fields.filter(f => !f.present).map(f => f.label);
+  const percentage = Math.round((present / fields.length) * 100);
+  const level = percentage >= 75 ? 'High' : percentage >= 50 ? 'Moderate' : 'Low';
+  return { level, percentage, fields_present: present, missing_fields: missing, total_fields: fields.length };
+}
+
+// -----------------------------------------------------------------------
+// Facebook Marketplace local scoring
+// -----------------------------------------------------------------------
+function analyzeFacebookLocal(productData) {
+  if (!productData || String(productData.platform || '').toLowerCase() !== 'facebook') return null;
+  const title    = fbNormalizeText(productData.product_name);
+  const desc     = fbNormalizeText(productData.description);
+  const allText  = `${title} ${desc}`.toLowerCase();
+  const price    = Number(productData.price);
+  const itemPrices = fbSafeArray(productData.fb_item_prices);
+  const flags = [], actions = [];
+  let score = 0;
+
+  const add = (pts, flag, action) => {
+    score += pts;
+    if (flag && !flags.includes(flag)) flags.push(flag);
+    if (action && !actions.includes(action)) actions.push(action);
+  };
+
+  const invalidTitle = !title || /^(search results|unknown listing|marketplace)$/i.test(title);
+  if (invalidTitle) add(18, 'Product title was not collected correctly.', 'Refresh the page and scan again, or verify the product title manually.');
+
+  const isPartsOut    = productData.fb_listing_type === 'parts-out'   || /\b(parts?\s*out|part-out|partout|chop\s*chop|pyesa|for\s+parts|per\s+item|each\s+item)\b/i.test(allText);
+  const isMultiItem   = productData.fb_listing_type === 'multi-item'  || itemPrices.length >= 3 || /\b(bundle|set|take\s+all|package|assorted|madami|marami|lot\b|wholesale)\b/i.test(allText);
+  const hasHiddenPrice = productData.fb_listing_type === 'hidden-price'
+    || /\b(pm|dm|message|chat)\b.{0,24}\b(price|presyo|actual|real|last\s+price)\b|\b(price|presyo)\b.{0,24}\b(pm|dm|message|chat)\b|price\s*(not|isn'?t)\s*actual|for\s+attention\s+only|placeholder\s+price|ask\s+for\s+price/i.test(allText);
+
+  if (isPartsOut)    add(18, 'Parts-out listing — posted price may apply to one component only.', 'Ask which exact part is included in the posted price.');
+  if (isMultiItem)   add(16, 'Multi-item or bundle listing — inclusions may be unclear.', 'Ask what items are included and confirm each item price.');
+  if (itemPrices.length >= 3) add(10, `${itemPrices.length} separate item prices found in the description.`, 'Use the description prices instead of the main Facebook price field.');
+  if (hasHiddenPrice) add(25, 'Actual price may be hidden — seller routes price to chat.', 'Ask for the final price before agreeing to meet or pay.');
+
+  const priceStr  = Number.isFinite(price) ? String(Math.trunc(price)) : '';
+  const repeatNum = /^(\d)\1{3,}$/.test(priceStr);
+  const seqNum    = /^(1234567|123456|12345|987654|999999|111111|222222|333333|444444|555555|666666|777777|888888|1000000|1111111)$/.test(priceStr);
+  if (!Number.isFinite(price) && !productData.price_display) {
+    add(12, 'Listed price was not clearly collected.', 'Ask the seller for the actual final price.');
+  } else if (price === 0 || /free/i.test(String(productData.price_display || ''))) {
+    add(28, 'Price appears as Free — may be a placeholder.', 'Confirm the real price with the seller before proceeding.');
+  } else if (price <= 20) {
+    add(35, 'Extremely low listed price detected.', 'Treat the price as a placeholder unless the seller confirms otherwise.');
+  } else if (repeatNum || seqNum) {
+    add(32, 'Placeholder-style price detected.', 'Ask for the actual price — do not rely on the posted number.');
+  } else if (price >= 1000000) {
+    add(8, 'Listed price is unusually high — may be a placeholder.', 'Confirm the actual price with the seller.');
+  }
+
+  const highValue = /\b(mclaren|ferrari|lamborghini|iphone|macbook|laptop|motorcycle|aerox|nmax|ps5|camera|rolex)\b/i.test(allText);
+  if (highValue && desc.length < 120) add(20, 'High-value item has a very short description.', 'Ask for receipt, proof of ownership, serial/model details, and meet-up verification.');
+
+  if (!isPresent(productData.condition))     add(10, 'Item condition was not detected.',       'Ask if the item is new, used, defective, or for parts.');
+  if (!isPresent(productData.seller_rating)) add(8,  'Seller rating was not found.',           'Check the seller profile manually before proceeding.');
+  if (desc.length < 60)                      add(14, 'Description is too short or incomplete.', 'Ask the seller for complete details, inclusions, and reason for selling.');
+
+  add(6, 'Facebook Marketplace has limited buyer protection compared with checkout-based platforms.', 'Prefer public meet-up and avoid advance full payment.');
+
+  score = Math.max(0, Math.min(100, score));
+  const clarificationNeeded = isPartsOut || isMultiItem || hasHiddenPrice || score >= 32;
+  if (clarificationNeeded) actions.unshift('Message the seller first for clarity before deciding to buy.');
+
+  return {
+    risk_score: Math.round(score),
+    risk_level: localBand(score),
+    flags,
+    actions: [...new Set(actions)].slice(0, 5),
+    clarification_needed: clarificationNeeded,
+    confidence: computeFacebookConfidence(productData),
+    summary: clarificationNeeded
+      ? 'This Facebook Marketplace listing needs clarification before purchase. The score reflects visible price transparency, listing type, and missing seller or item details.'
+      : 'This Facebook Marketplace listing has no strong visible warning signs based on available public data.',
+  };
+}
+
+// -----------------------------------------------------------------------
+// Shopee / Lazada local scoring
+// -----------------------------------------------------------------------
+function analyzeCommerceLocal(productData) {
+  const platform = String(productData?.platform || '').toLowerCase();
+  if (!['shopee', 'lazada'].includes(platform)) return null;
+  const title       = fbNormalizeText(productData.product_name);
+  const desc        = fbNormalizeText(productData.description);
+  const allText     = `${title} ${desc}`.toLowerCase();
+  const price       = Number(productData.price);
+  const sold        = isPresent(productData.sold_count) ? countToNum(productData.sold_count) : null;
+  const ratingCount = isPresent(productData.rating_count) ? countToNum(productData.rating_count) : null;
+  const rating      = isPresent(productData.rating) ? Number(productData.rating) : null;
+  const flags = [], actions = [];
+  let score = 0;
+
+  const add = (pts, flag, action) => {
+    score += pts;
+    if (flag && !flags.includes(flag)) flags.push(flag);
+    if (action && !actions.includes(action)) actions.push(action);
+  };
+
+  const sellerBot = looksLikeBotSellerName(productData.seller_name);
+  if (productData.price_is_variant || productData.price_is_ambiguous
+      || /select\s+(a\s+)?(variation|variant|option)/i.test(String(productData.price_display || '') + allText)) {
+    add(30, 'Price is unclear — a variant or option may need to be selected first.', 'Select the exact variant/option first, then scan again.');
+  } else if (!Number.isFinite(price)) {
+    add(18, 'Price was not collected clearly.', 'Check the exact price before buying.');
+  } else if (price === 0 || /\bfree\b/i.test(String(productData.price_display || ''))) {
+    add(35, 'Price shows as Free — may be an incomplete or promotional display.', 'Confirm the actual price and selected variant before proceeding.');
+  } else if (price <= 20) {
+    add(32, 'Extremely low listed price detected.', 'Check whether this is a placeholder, add-on, or wrong variant price.');
+  }
+
+  const category = classifyCommerceCategory(allText);
+  const floor    = categoryMinPrice(category, allText);
+  if (Number.isFinite(price) && price > 0 && price < floor) {
+    add(category === 'general' ? 10 : 28, `Listed price is unusually low for a ${category} item.`, 'Compare with other listings and verify the actual item/variant before paying.');
+  }
+
+  if (ratingCount === 0 || ratingCount === null) {
+    add(18, 'No product ratings or reviews detected.', 'There is no visible buyer feedback for this product yet — proceed carefully.');
+  } else if (rating !== null && rating >= 4.8 && ratingCount !== null && ratingCount <= 3) {
+    add(10, 'Very high rating with very few reviews.', 'Do not rely on rating alone — check seller and review details.');
+  }
+
+  if (sold === 0 || sold === null) {
+    add(12, 'No visible sold count detected.', 'Treat this as a new or unverified listing unless other trust signals are present.');
+  }
+
+  if (!isPresent(productData.seller_name)) {
+    add(16, 'Seller name was not collected.', 'Open the store profile and verify the seller before buying.');
+  } else if (sellerBot) {
+    add(20, 'Seller name looks random or auto-generated.', 'Check the store profile, ratings, and history before proceeding.');
+  }
+
+  const noSellerTrust = platform === 'shopee'
+    ? !isPresent(productData.response_rate) && !isPresent(productData.shop_age) && !productData.is_shopee_mall
+    : !isPresent(productData.seller_rating) && !(Array.isArray(productData.seller_badges) && productData.seller_badges.length) && !productData.is_lazmall;
+  if (noSellerTrust) add(18, 'Seller trust indicators are missing or weak.', 'Check seller rating, response rate, badges, shop age, and store activity.');
+
+  if (desc.length < 60 || /no\s+description|description\s+not\s+available/i.test(desc)) {
+    add(12, 'Product description is short or incomplete.', 'Ask for complete specifications, warranty, inclusions, and seller proof.');
+  }
+
+  if (/\b(pm|dm|chat|message)\b.{0,24}\b(price|presyo|actual|real)\b|price\s*(not|isn'?t)\s*actual|for\s+attention\s+only/i.test(allText)) {
+    add(24, 'Actual price may be hidden or discussed outside the listing.', 'Keep the transaction inside the official platform when possible.');
+  }
+
+  if ((!!productData.is_shopee_mall || !!productData.is_lazmall) && score > 0) score = Math.max(0, score - 8);
+
+  const clarificationNeeded = score >= 35 || productData.price_is_variant || sellerBot || (ratingCount === 0 || ratingCount === null) || noSellerTrust;
+  if (clarificationNeeded) {
+    actions.unshift(platform === 'lazada'
+      ? 'Open the store profile and verify seller rating, reviews, and return/warranty terms.'
+      : 'Open the shop profile and verify seller activity, response rate, and buyer feedback.');
+  }
+  if (ratingCount === null || sold === null) actions.push('Treat the listing as unverified until reviews or sales are visible.');
+  if (productData.price_is_variant || productData.price_is_ambiguous) actions.push('Select the exact variant first before trusting the price.');
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  return {
+    platform,
+    risk_score: score,
+    risk_level: localBand(score),
+    flags,
+    actions: [...new Set(actions)].slice(0, 5),
+    clarification_needed: clarificationNeeded,
+    confidence: computeCommerceConfidence(productData),
+    category,
+    summary: clarificationNeeded
+      ? `This ${platform === 'lazada' ? 'Lazada' : 'Shopee'} listing needs extra verification — buyer feedback, seller trust, price, or product details are unclear.`
+      : `This ${platform === 'lazada' ? 'Lazada' : 'Shopee'} listing has no strong visible warning signs based on the collected data.`,
+  };
+}
+
+// -----------------------------------------------------------------------
+// Merge local intelligence with backend result
+// -----------------------------------------------------------------------
+function enhanceFacebookResult(scanResult, productData) {
+  const local = analyzeFacebookLocal(productData);
+  if (!local) return scanResult;
+  const backendScore = Number.isFinite(Number(scanResult?.risk_score)) ? Number(scanResult.risk_score) : 0;
+  const finalScore   = Math.max(backendScore, local.risk_score);
+  const mergedFlags  = [...new Set([...(Array.isArray(scanResult?.flags) ? scanResult.flags : []), ...local.flags])];
+  return {
+    ...(scanResult || {}),
+    platform: 'facebook',
+    risk_score: finalScore,
+    risk_level: localBand(finalScore),
+    flags: mergedFlags,
+    confidence: local.confidence,
+    action_steps: local.actions,
+    risk_message: scanResult?.risk_message || local.summary,
+    product_notice: local.clarification_needed ? {
+      title: 'Clarification Needed',
+      message: 'This listing has unclear price, condition, inclusions, or seller signals. Ask the seller for the missing details before proceeding.',
+      indicators: local.flags.slice(0, 5),
+      disclaimer: 'This is not a final scam verdict — it is a caution guide based on visible Facebook Marketplace data only.',
+    } : scanResult?.product_notice,
+    positive_signals: Array.isArray(scanResult?.positive_signals) ? scanResult.positive_signals : [],
+  };
+}
+
+function enhanceCommerceResult(scanResult, productData) {
+  const local = analyzeCommerceLocal(productData);
+  if (!local) return scanResult;
+  const backendScore = Number.isFinite(Number(scanResult?.risk_score)) ? Number(scanResult.risk_score) : 0;
+  const finalScore   = Math.max(backendScore, local.risk_score);
+  const mergedFlags  = [...new Set([...(Array.isArray(scanResult?.flags) ? scanResult.flags : []), ...local.flags])];
+  return {
+    ...(scanResult || {}),
+    platform: local.platform,
+    risk_score: finalScore,
+    risk_level: localBand(finalScore),
+    flags: mergedFlags,
+    confidence: local.confidence,
+    action_steps: local.actions,
+    risk_message: scanResult?.risk_message || local.summary,
+    product_notice: local.clarification_needed ? {
+      title: 'Verify Before Buying',
+      message: 'This listing has unclear buyer feedback, seller trust, price, warranty, or product details. Verify the missing details before checking out.',
+      indicators: local.flags.slice(0, 5),
+      disclaimer: 'This is not a final scam verdict — it is a caution guide based on visible listing data only.',
+    } : scanResult?.product_notice,
+    positive_signals: Array.isArray(scanResult?.positive_signals) ? scanResult.positive_signals : [],
+  };
+}
+
+function enhancePlatformResult(scanResult, productData) {
+  if (!productData) return scanResult;
+  const platform = String(productData?.platform || '').toLowerCase();
+  if (platform === 'facebook') return enhanceFacebookResult(scanResult, productData);
+  if (platform === 'shopee' || platform === 'lazada') return enhanceCommerceResult(scanResult, productData);
+  return scanResult;
+}
+
 // Clean function to show only PRODUCT risk assessment
 function showRiskAssessment(riskScore, riskLevel, description, productData = null, scanResult = null) {
+  // Enrich backend result with client-side local intelligence
+  if (productData && !scanResult?.comments && !scanResult?.comment_analysis) {
+    scanResult = enhancePlatformResult(scanResult, productData);
+    if (scanResult) {
+      riskScore = scanResult.risk_score ?? riskScore;
+      riskLevel = scanResult.risk_level ?? riskLevel;
+    }
+  }
   const commentsEnvelope = scanResult?.comments || scanResult?.comment_analysis || null;
   const commentsDerived = commentsEnvelope ? synthesizeCommentOnlyEnvelope(commentsEnvelope) : null;
   let safeRiskScore = Number.isFinite(Number(riskScore))
@@ -714,7 +1051,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
   if (safeRiskScore === null && commentsDerived) safeRiskScore = commentsDerived.risk_score;
   if (safeRiskScore === null) safeRiskScore = 0;
   let safeRiskLevel = riskLevel || commentsDerived?.risk_level || bandFromScore(safeRiskScore);
-  safeRiskLevel = ["High", "Medium", "Low"].includes(safeRiskLevel) ? safeRiskLevel : bandFromScore(safeRiskScore);
+  safeRiskLevel = ["Very High", "High", "Medium", "Low", "Very Low"].includes(safeRiskLevel) ? safeRiskLevel : bandFromScore(safeRiskScore);
 
   const timestamp = new Date().toLocaleString('en-US', {
     year: 'numeric',
@@ -1260,8 +1597,8 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     <div class="result-card">
       ${productData?.product_name ? `<div class="result-product-name">${String(productData.product_name).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
       ${(isDeepScan || isCommentsScan || isFacebookScan) ? `
-      <div class="risk-badge risk-${safeRiskLevel.toLowerCase()}"></div>
-      <div class="risk-level-text risk-${safeRiskLevel.toLowerCase()}">${safeRiskLevel.toUpperCase()} RISK</div>` : ''}
+      <div class="risk-badge risk-${safeRiskLevel.toLowerCase().replace(/\s+/g, '-')}"></div>
+      <div class="risk-level-text risk-${safeRiskLevel.toLowerCase().replace(/\s+/g, '-')}">${safeRiskLevel.toUpperCase()} RISK</div>` : ''}
       ${(isDeepScan || isFacebookScan) ? `<div class="risk-score-text">Score: ${safeRiskScore} / 100</div>` : ''}
 
       ${confidenceHTML}
@@ -1743,10 +2080,11 @@ function performScan(isAutomatic = false, withReviews = false) {
 // block. Score is derived from avg(bot, fake)*100 and banded client-side.
 // -----------------------------------------------------------------------
 function bandFromScore(score) {
-  if (score >= 76) return "High";
-  if (score >= 51) return "Medium";
-  if (score >= 26) return "Low";
-  return "Low"; // collapse "Very Low" → "Low" (no .risk-very CSS class)
+  if (score >= 85) return "Very High";
+  if (score >= 70) return "High";
+  if (score >= 40) return "Medium";
+  if (score >= 20) return "Low";
+  return "Very Low";
 }
 
 /**
