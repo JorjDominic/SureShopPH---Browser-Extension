@@ -771,11 +771,14 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
       <div class="confidence-block ${lvlClass}">
         <div class="confidence-row">
           <span class="confidence-label"><i class="fas fa-database"></i> Confidence</span>
-          <span class="confidence-badge ${lvlClass}">
-            ${conf.confidenceLevel}
-            <span class="confidence-tooltip" title="Confidence measures how much data was available for analysis — not how accurate the risk score is. A lower confidence means fewer data points were retrieved.">
-              <i class="fas fa-circle-info"></i>
+          <span class="confidence-row-badges">
+            <span class="confidence-badge ${lvlClass}">
+              ${conf.confidenceLevel}
+              <span class="confidence-tooltip" title="Confidence measures how much data was available for analysis — not how accurate the risk score is. A lower confidence means fewer data points were retrieved.">
+                <i class="fas fa-circle-info"></i>
+              </span>
             </span>
+            <span class="confidence-badge ${lvlClass}" title="Data availability">${conf.confidencePercentage}%</span>
           </span>
         </div>
         ${detailLine}
@@ -953,7 +956,7 @@ function showRiskAssessment(riskScore, riskLevel, description, productData = nul
     botAnalysisHTML = `
       <div class="bot-analysis-block">
         <button class="bot-analysis-header section-toggle" aria-expanded="${isCommentsScan ? 'true' : 'false'}">
-          <span><i class="fas fa-shield-alt"></i> Risk Flags</span>
+          <span><i class="fas fa-shield-alt"></i> Key Issues Found</span>
           <span class="section-toggle-meta">
             ${totalFlagCountBadge}
             ${sentimentHTML}
